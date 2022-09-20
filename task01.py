@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 # plt.ginput ... for entering the points
 # np.cross ... cross product
 
+# test for changes
+
 H = np.array([[1,     0.1,   0],
               [0.1,   1,     0],
               [0.004, 0.002, 1]])
