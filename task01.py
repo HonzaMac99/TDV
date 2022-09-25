@@ -20,13 +20,13 @@ for i in range(2):
     plt.plot(points[i][0], points[i][1], "or")
     print(points[i])
 
-plt.plot([points[0][0], points[1][0]], [points[0][1], points[1][1]], "r-")
+plt.plot([points[0][0], points[1][0]], [points[0][1], points[1][1]], "r--")
 
 for i in range(2, 4, 1):
     plt.plot(points[i][0], points[i][1], "ob")
     print(points[i])
 
-plt.plot([points[2][0], points[3][0]], [points[2][1], points[3][1]], "b-")
+plt.plot([points[2][0], points[3][0]], [points[2][1], points[3][1]], "b--")
 
 plt.show()
 
