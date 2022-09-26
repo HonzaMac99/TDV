@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib as mp
 import matplotlib.pyplot as plt
 
 # plt.ginput ... for entering the points
