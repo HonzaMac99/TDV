@@ -21,8 +21,17 @@ for i in range(4):
         plt.plot(points[i][0], points[i][1], "ob")
     print(points[i])
 
+
 plt.plot([points[0][0], points[1][0]], [points[0][1], points[1][1]], "r--")
 plt.plot([points[2][0], points[3][0]], [points[2][1], points[3][1]], "b--")
+
+plt.plot([100, 200], [100, 200], "og")
+plt.plot([700, 400], [100, 200], "og")
+
+# a = [1, 2]
+# b = [4, 5]
+# c = np.cross(a, b)
+# print(c)
 
 plt.show()
 
