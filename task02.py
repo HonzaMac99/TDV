@@ -34,6 +34,9 @@ R0 = tb.RotMatrix(math.pi/2).Ry @ tb.RotMatrix(math.pi/2).Rx
 R4 = tb.RotMatrix(0.5).Rx
 R5 = tb.RotMatrix(math.pi/2).Rx
 R6 = tb.RotMatrix(0.8).Rx @ tb.RotMatrix(-0.5).Ry
+# R61 = tb.RotMatrix(1.2).Rx @ tb.RotMatrix(-0.5).Ry
+# R62 = tb.RotMatrix(1.6).Rx @ tb.RotMatrix(-0.5).Ry
+# R63 = tb.RotMatrix(2).Rx @ tb.RotMatrix(-0.5).Ry
 
 P1 = K @ np.eye(3, 4)
 P2 = K @ np.hstack([E3, -t2])
@@ -41,10 +44,14 @@ P3 = K @ np.hstack([E3, -t3])
 P4 = K @ R4 @ np.hstack([E3, -t4])
 P5 = K @ R5 @ np.hstack([E3, -t5])
 P6 = K @ R6 @ np.hstack([E3, -t6])
+# P61 = K @ R61 @ np.hstack([E3, -t6])
+# P62 = K @ R62 @ np.hstack([E3, -t6])
+# P63 = K @ R63 @ np.hstack([E3, -t6])
 P = [P1, P2, P3, P4, P5, P6]
+#P = [P1, P2, P3, P4, P5, P6, P61, P62, P63]
 
 
-for i in range(6):
+for i in range(len(P)):
     X1_tf = get_tf_points(X1, P[i])
     [u1, v1] = X1_tf
     X2_tf = get_tf_points(X2, P[i])
