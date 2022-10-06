@@ -9,6 +9,19 @@ import sys
 # i = rng.choice(n, 2, replace=False)
 
 
+def find_angle_dist(line):
+    [a, b, c] = line
+    angle = math.acos(b / math.sqrt(a**2 + b**2))
+    angle = angle*180/math.pi  # from radians to deg
+    if angle > 90:
+        angle = 180 - angle
+    elif angle < -90:
+        angle = -180 - angle
+    dist = abs(c / math.sqrt(a**2 + b**2))
+
+    return angle, dist
+
+
 def print_status(k, k_max, support):
     print("k:", k)
     print("k_max:", k_max)
@@ -77,41 +90,27 @@ def find_model(points, theta, probability, mode=0, lsq=0):
                 elif mode == 1:  # mlesac
                     support += 1 - error**2/theta**2
                 else:
-                    print("Invalid mode! (not 0 or 1)")
+                    print("Invalid mode! (only 0 or 1 allowed)")
                     return
         if support > best_support:
             best_support = support
             best_line = n
             # plot_results(points, m, inliers_plot, theta, best_line, best_support)
         k += 1
-        w = support/total_points
+        w = support / total_points
         k_max = math.log(1 - probability) / math.log(1 - w ** 2)
         # print_status(k, k_max, support)
-        # if k > k_max:
-        #     plot_results(points, m, inliers_plot, theta, best_line, best_support)
 
     if lsq:
         print("TODO: do lsq over the inliers")
 
-    a = best_line[0]
-    b = best_line[1]
-    c = best_line[2]
+    return find_angle_dist(best_line)
 
-    angle = math.acos(b / math.sqrt(a**2 + b**2))
-    angle = angle*180/math.pi  # from radians to deg
-    if angle > 90:
-        angle = 180 - angle
-    elif angle < -90:
-        angle = -180 - angle
-    dist = abs(c / math.sqrt(a**2 + b**2))
-
-    return angle, dist
-
-
-input_points = np.array(np.loadtxt("linefit_1.txt").T)
 probability = 0.99
 theta = 10
-#
+input_points = np.array(np.loadtxt("linefit_1.txt").T)
+
+# RANSAC 100 times
 for i in range(1, 101):
     sys.stdout.flush()
     sys.stdout.write("\rRansac: %i %%" % i)
@@ -120,8 +119,9 @@ for i in range(1, 101):
     plt.xlabel("angle [deg]")
     plt.ylabel("dist to origin")
     plt.plot(line_angle, line_dist, "mo", markersize=2)
-
 print("")
+
+# MLESAC 100 times
 for i in range(1, 101):
     sys.stdout.flush()
     sys.stdout.write("\rMlesac: %i %%" % i)
@@ -130,6 +130,11 @@ for i in range(1, 101):
     plt.xlabel("angle [deg]")
     plt.ylabel("dist to origin")
     plt.plot(line_angle, line_dist, "bo", markersize=2)
+
+# ground truth
+orig_line = np.array([-10, 3, 1200])
+ol_angle, ol_dist = find_angle_dist(orig_line)
+plt.plot(ol_angle, ol_dist, "go")
 
 plt.show()
 
