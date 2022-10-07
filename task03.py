@@ -56,6 +56,27 @@ def plot_results(points, sample, inliers, theta, best_line, best_support):
     plt.show()
 
 
+def do_lsq(inliers):
+    n = inliers.shape[1]
+    centroid = np.zeros([2, 1])
+    for i in range(n):
+        centroid += inliers[:, i].reshape([2, 1])
+    centroid /= n
+
+    A = np.zeros([2, n])
+    for i in range(n):
+        A[:, i] = inliers[:, i] - centroid.reshape([2, ])
+
+    [U, S, V] = np.linalg.svd(A)
+
+    [a, b] = U[:, 1]
+    normal = np.array([a, b])
+    c = -normal@centroid.reshape([2,])
+    best_line = [a, b, c]
+    return best_line
+
+
+
 def find_model(points, theta, probability, mode=0, lsq=0):
     """
     find_model:
@@ -74,17 +95,18 @@ def find_model(points, theta, probability, mode=0, lsq=0):
     k = 0
     k_max = 1000
     best_support = 0
+    inliers_idx = []
     while k <= k_max:
         support = 0
         m = rng.choice(points.T, 2, replace=False).T
         m_hom = tb.e2p(np.array(m))
         n = np.cross(m_hom[:, 0], m_hom[:, 1])
-        inliers_plot = []
+        inliers_idx = []
         for i in range(total_points):
             point = tb.e2p(points[:, i].reshape(2, 1))
             error = abs(n@point/(math.sqrt(n[0]**2 + n[1]**2) * point[2]))
             if error < theta:
-                inliers_plot.append(i)
+                inliers_idx.append(i)
                 if mode == 0:  # ransac
                     support += 1
                 elif mode == 1:  # mlesac
@@ -95,20 +117,27 @@ def find_model(points, theta, probability, mode=0, lsq=0):
         if support > best_support:
             best_support = support
             best_line = n
-            # plot_results(points, m, inliers_plot, theta, best_line, best_support)
+            # plot_results(points, m, inliers_idx, theta, best_line, best_support)
         k += 1
         w = support / total_points
         k_max = math.log(1 - probability) / math.log(1 - w ** 2)
         # print_status(k, k_max, support)
 
+    num_inliers = len(inliers_idx)
+    inliers = np.zeros([2, num_inliers])
+    for i in range(num_inliers):
+        inliers[:, i] = points[:, inliers_idx[i]]
+
     if lsq:
-        print("TODO: do lsq over the inliers")
+        best_line = do_lsq(inliers)
 
     return find_angle_dist(best_line)
 
 probability = 0.99
 theta = 10
 input_points = np.array(np.loadtxt("linefit_1.txt").T)
+# input_points = np.array(np.loadtxt("linefit_2.txt").T)
+# input_points = np.array(np.loadtxt("linefit_3.txt").T)
 
 # RANSAC 100 times
 for i in range(1, 101):
@@ -130,6 +159,30 @@ for i in range(1, 101):
     plt.xlabel("angle [deg]")
     plt.ylabel("dist to origin")
     plt.plot(line_angle, line_dist, "bo", markersize=2)
+print("")
+
+# RANSAC with after-MLE 5 times
+for i in range(0, 101, 20):
+
+    sys.stdout.flush()
+    sys.stdout.write("\rRansac with MLE: %i %%" % i)
+
+    line_angle, line_dist = find_model(input_points, theta, probability, 1, 1)
+    plt.xlabel("angle [deg]")
+    plt.ylabel("dist to origin")
+    plt.plot(line_angle, line_dist, "ro", markersize=2)
+print("")
+
+# MLESAC with after-MLE 5 times
+for i in range(0, 101, 20):
+
+    sys.stdout.flush()
+    sys.stdout.write("\rMlesac with MLE: %i %%" % i)
+
+    line_angle, line_dist = find_model(input_points, theta, probability, 1, 1)
+    plt.xlabel("angle [deg]")
+    plt.ylabel("dist to origin")
+    plt.plot(line_angle, line_dist, "co", markersize=2)
 
 # ground truth
 orig_line = np.array([-10, 3, 1200])
@@ -137,5 +190,3 @@ ol_angle, ol_dist = find_angle_dist(orig_line)
 plt.plot(ol_angle, ol_dist, "go")
 
 plt.show()
-
-
