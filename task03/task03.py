@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import numpy as np
 import matplotlib.pyplot as plt
 import toolbox as tb
@@ -139,6 +140,8 @@ def find_model(points, theta, probability, mode=0, lsq=0):
 probability = 0.99
 theta = 5
 run_times = 100
+if len(sys.argv) > 1:
+    run_times = int(sys.argv[1])
 input_points = np.array(np.loadtxt("linefit_1.txt").T)
 # input_points = np.array(np.loadtxt("linefit_2.txt").T)
 # input_points = np.array(np.loadtxt("linefit_3.txt").T)
@@ -227,3 +230,4 @@ plot_line(mlesac_lsq_line, "c-", "mlesac+lsq")
 plt.axis([0, 450, 0, 300])
 plt.legend()
 plt.show()
+
