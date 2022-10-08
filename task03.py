@@ -4,9 +4,7 @@ import toolbox as tb
 import math
 import sys
 
-
-# rng = np.random.default_rng()
-# i = rng.choice(n, 2, replace=False)
+[ransac_line, mlesac_line, ransac_lsq_line, mlesac_lsq_line] = np.zeros([4, 3])
 
 
 def find_angle_dist(line):
@@ -30,15 +28,19 @@ def print_status(k, k_max, support):
     print("")
 
 
+def plot_line(line, params, plot_label=""):
+    line_x = np.array([-line[2]/line[0], -(line[2] + 300*line[1])/line[0]])
+    line_y = np.array([0, 300])
+    plt.plot(line_x, line_y, params, label=plot_label)
+
+
 def plot_results(points, sample, inliers, theta, best_line, best_support):
     inliers_plot = points[:, inliers[0]].reshape(2, 1)
     for i in range(len(inliers)-1):
         inliers_plot = np.hstack([inliers_plot, points[:, inliers[i]].reshape(2, 1)])
 
-    line_x = [-best_line[2]/best_line[0], -(best_line[2] + 300*best_line[1])/best_line[0]]
-    line_y = [0, 300]
-    line_x = np.array(line_x)
-    line_y = np.array(line_y)
+    line_x = np.array([-best_line[2]/best_line[0], -(best_line[2] + 300*best_line[1])/best_line[0]])
+    line_y = np.array([0, 300])
 
     d = best_line[:2]/(math.sqrt(best_line[0]**2 + best_line[1]**2))
     boundary1_x = line_x + theta*d[0]
@@ -46,6 +48,7 @@ def plot_results(points, sample, inliers, theta, best_line, best_support):
     boundary2_x = line_x - theta*d[0]
     boundary2_y = line_y - theta*d[1]
 
+    plt.plot(points[0], points[1], "ko", markersize=2)
     plt.plot(line_x, line_y, "r-")
     plt.plot(boundary1_x, boundary1_y, "b--")
     plt.plot(boundary2_x, boundary2_y, "b--")
@@ -65,16 +68,15 @@ def do_lsq(inliers):
 
     A = np.zeros([2, n])
     for i in range(n):
-        A[:, i] = inliers[:, i] - centroid.reshape([2, ])
+        A[:, i] = inliers[:, i] - centroid.reshape([2, ])  # shape = (2, n), in fact this is A.T
 
-    [U, S, V] = np.linalg.svd(A)
+    [U, S, V] = np.linalg.svd(A.T)  # A.T.shape = (n, 2), in fact this is A.T.T = A
 
-    [a, b] = U[:, 1]
+    [a, b] = V.T[:, 1]
     normal = np.array([a, b])
     c = -normal@centroid.reshape([2,])
     best_line = [a, b, c]
     return best_line
-
 
 
 def find_model(points, theta, probability, mode=0, lsq=0):
@@ -131,62 +133,97 @@ def find_model(points, theta, probability, mode=0, lsq=0):
     if lsq:
         best_line = do_lsq(inliers)
 
-    return find_angle_dist(best_line)
+    return best_line
+
 
 probability = 0.99
-theta = 10
+theta = 5
+run_times = 100
 input_points = np.array(np.loadtxt("linefit_1.txt").T)
 # input_points = np.array(np.loadtxt("linefit_2.txt").T)
 # input_points = np.array(np.loadtxt("linefit_3.txt").T)
 
-# RANSAC 100 times
-for i in range(1, 101):
-    sys.stdout.flush()
-    sys.stdout.write("\rRansac: %i %%" % i)
+plt.xlabel("angle [deg]")
+plt.ylabel("dist to origin")
 
-    line_angle, line_dist = find_model(input_points, theta, probability, 0, 0)
-    plt.xlabel("angle [deg]")
-    plt.ylabel("dist to origin")
+# LSQ over all points
+lsq_line = do_lsq(input_points)
+line_angle, line_dist = find_angle_dist(lsq_line)
+# plt.plot(line_angle, line_dist, "rx", label="lsq")
+
+sys.stdout.write("\rLSQ: %i %%" % 100)
+print("")
+
+# RANSAC 100 times
+for i in range(run_times):
+    j = int(i/run_times*100)
+    sys.stdout.flush()
+    sys.stdout.write("\rRansac: %i %%" % j)
+
+    ransac_line = find_model(input_points, theta, probability, 0, 0)
+    line_angle, line_dist = find_angle_dist(ransac_line)
     plt.plot(line_angle, line_dist, "mo", markersize=2)
+plt.plot(line_angle, line_dist, "mo", label="ransac", markersize=2)
+sys.stdout.flush()
+sys.stdout.write("\rRansac: %i %%" % 100)
 print("")
 
 # MLESAC 100 times
-for i in range(1, 101):
+for i in range(run_times):
+    j = int(i/run_times*100)
     sys.stdout.flush()
-    sys.stdout.write("\rMlesac: %i %%" % i)
+    sys.stdout.write("\rMlesac: %i %%" % j)
 
-    line_angle, line_dist = find_model(input_points, theta, probability, 1, 0)
-    plt.xlabel("angle [deg]")
-    plt.ylabel("dist to origin")
+    mlesac_line = find_model(input_points, theta, probability, 1, 0)
+    line_angle, line_dist = find_angle_dist(mlesac_line)
     plt.plot(line_angle, line_dist, "bo", markersize=2)
+plt.plot(line_angle, line_dist, "bo", label="mlesac", markersize=2)
+sys.stdout.flush()
+sys.stdout.write("\rMlesac: %i %%" % 100)
 print("")
 
-# RANSAC with after-MLE 5 times
-for i in range(0, 101, 20):
-
+# RANSAC with LSQ over inliers 100 times
+for i in range(run_times):
+    j = int(i/run_times*100)
     sys.stdout.flush()
-    sys.stdout.write("\rRansac with MLE: %i %%" % i)
+    sys.stdout.write("\rRansac with LSQ: %i %%" % j)
 
-    line_angle, line_dist = find_model(input_points, theta, probability, 1, 1)
-    plt.xlabel("angle [deg]")
-    plt.ylabel("dist to origin")
-    plt.plot(line_angle, line_dist, "ro", markersize=2)
+    ransac_lsq_line = find_model(input_points, theta, probability, 0, 1)
+    line_angle, line_dist = find_angle_dist(ransac_lsq_line)
+    plt.plot(line_angle, line_dist, "ro")
+plt.plot(line_angle, line_dist, "ro", label="ransac+lsq")
+sys.stdout.flush()
+sys.stdout.write("\rRansac with LSQ: %i %%" % 100)
 print("")
 
-# MLESAC with after-MLE 5 times
-for i in range(0, 101, 20):
-
+# MLESAC with LSQ over inliers 100 times
+for i in range(run_times):
+    j = int(i/run_times*100)
     sys.stdout.flush()
-    sys.stdout.write("\rMlesac with MLE: %i %%" % i)
+    sys.stdout.write("\rMlesac with LSQ: %i %%" % j)
 
-    line_angle, line_dist = find_model(input_points, theta, probability, 1, 1)
-    plt.xlabel("angle [deg]")
-    plt.ylabel("dist to origin")
-    plt.plot(line_angle, line_dist, "co", markersize=2)
+    mlesac_lsq_line = find_model(input_points, theta, probability, 1, 1)
+    line_angle, line_dist = find_angle_dist(mlesac_lsq_line)
+    plt.plot(line_angle, line_dist, "co")
+plt.plot(line_angle, line_dist, "co", label="mlesac+lsq")
+sys.stdout.flush()
+sys.stdout.write("\rMlesac with LSQ: %i %%" % 100)
 
 # ground truth
-orig_line = np.array([-10, 3, 1200])
-ol_angle, ol_dist = find_angle_dist(orig_line)
-plt.plot(ol_angle, ol_dist, "go")
+gt_line = np.array([-10, 3, 1200])
+gt_angle, gt_dist = find_angle_dist(gt_line)
+plt.plot(gt_angle, gt_dist, "gx", label="gt")
 
+plt.legend()
+plt.show()
+
+# plot examples of line of each method
+plt.plot(input_points[0], input_points[1], "ko", markersize=2)
+plot_line(lsq_line, "y-", "lsq")
+plot_line(ransac_line, "m-", "ransac")
+plot_line(mlesac_line, "b-", "mlesac")
+plot_line(ransac_lsq_line, "r-", "ransac+lsq")
+plot_line(mlesac_lsq_line, "c-", "mlesac+lsq")
+plt.axis([0, 450, 0, 300])
+plt.legend()
 plt.show()
