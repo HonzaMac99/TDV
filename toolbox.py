@@ -5,7 +5,8 @@ import math
 class RotMatrix:
     def __init__(self, theta, dim=3):
         self.theta = theta
-        c, s = np.cos(self.theta), np.sin(self.theta)
+        c = np.cos(self.theta)
+        s = np.sin(self.theta)
         if dim == 3:
             self.Rx = np.array([[1,  0, 0], [0, c, -s], [ 0, s, c]])
             self.Ry = np.array([[c,  0, s], [0, 1,  0], [-s, 0, c]])
@@ -62,13 +63,9 @@ def sqc(x):
 
 
 # essential matrix decomposition with cheirality
-# def eutoRb(E, u1, u2):
-    # return [R, b]
+def eutoRt(E, u1, u2):
 
-
-# essential matrix decomposition with cheirality
-# def eutoRt(E, u1, u2):
-# return [R, t]
+    return [R, t]
 
 
 # binocular reconstruction by DLT triangulation
@@ -77,8 +74,10 @@ def sqc(x):
 
 
 # sampson error on epipolar geometry
-# def err_F_sampson(F, u1, u2):
-    # return e
+def err_F_sampson(F, u1, u2):
+    e = (u2.T*F*u1)**2/(F@u1[0]**2 + F@u1[1]**2 + F.T@u2*2 + F.T@u2*2)
+    e = math.sqrt(e)
+    return e
 
 
 # sampson correction of correspondences
