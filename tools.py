@@ -45,13 +45,10 @@ def p2e(u_p):
 
 # counts vectors length
 def vlen(x):
-    l = np.zeros([1, x.shape[1]])
+    vec_len = np.zeros(x.shape[1])
     for i in range(x.shape[1]):  # columns
-        vec_len = 0
-        for j in range(x.shape[0]):  # rows
-            vec_len += pow(x[j, i], 2)
-        l[i] = math.sqrt(vec_len)
-    return l
+        vec_len[i] = math.sqrt(sum(x[:, i]**2))
+    return vec_len
 
 
 # produces a 3x3 skew-symmetric matrix from 3x1 vector
@@ -63,14 +60,50 @@ def sqc(x):
 
 
 # essential matrix decomposition with cheirality
-def eutoRt(E, u1, u2):
+def EutoRt(E, u1, u2):
+    params = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
+    n_points = u1.shape[1]
+    [U, D, V] = np.linalg.svd(E)
 
-    return [R, t]
+    for i in range(4):
+        alpha, beta = params[i]
+        W = np.array([[0, alpha, 0],
+                      [-alpha, 0, 0],
+                      [0, 0, 1]])
+        R = U@W@V.T
+        t = -beta*U[:, 2]
+        t = np.vstack(t)
+
+        P1 = np.eye(3, 4)
+        P2 = np.hstack((R, t))
+
+        correct = True
+        for j in range(n_points):
+            A = np.array([[P1[0] - P1[2]*u1[0, j]],
+                          [P1[1] - P1[2]*u1[1, j]],
+                          [P2[0] - P2[2]*u2[0, j]],
+                          [P2[1] - P2[2]*u2[1, j]]])
+            [Ua, Da, Va] = np.linalg.svd(A)
+            X = Va[:, 3]
+            X = X/X[3]  # convert to homogenous 4x1
+
+            if ((P1@X)[2] < 0).any() or ((P2@X)[2].any() < 0).any():
+                correct = False
+                break
+
+        if correct == True:
+           return R, t
+
+    # return this if there is no valid E decomposition
+    R = np.array([])
+    t = np.vstack([1, 0, 1])  # just random t
+    return R, t
 
 
 # binocular reconstruction by DLT triangulation
-# def pu2X(P1, P2, u1, u2):
-    # return X
+def Pu2X(P1, P2, u1, u2):
+    #return X
+    return []
 
 
 # sampson error on epipolar geometry
@@ -81,5 +114,6 @@ def err_F_sampson(F, u1, u2):
 
 
 # sampson correction of correspondences
-# def u_correct_sampson(F, u1, u2):
-    # return nu1, nu2
+def u_correct_sampson(F, u1, u2):
+    #return nu1, nu2
+    return []
