@@ -63,14 +63,14 @@ def sqc(x):
 def EutoRt(E, u1, u2):
     params = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
     n_points = u1.shape[1]
-    [U, D, V] = np.linalg.svd(E)
+    [U, D, V_t] = np.linalg.svd(E)
 
     for i in range(4):
         alpha, beta = params[i]
         W = np.array([[0, alpha, 0],
                       [-alpha, 0, 0],
                       [0, 0, 1]])
-        R = U@W@V.T
+        R = U@W@V_t
         t = -beta*U[:, 2]
         t = np.vstack(t)
 
@@ -79,15 +79,20 @@ def EutoRt(E, u1, u2):
 
         correct = True
         for j in range(n_points):
-            A = np.array([[P1[0] - P1[2]*u1[0, j]],
-                          [P1[1] - P1[2]*u1[1, j]],
-                          [P2[0] - P2[2]*u2[0, j]],
-                          [P2[1] - P2[2]*u2[1, j]]])
-            [Ua, Da, Va] = np.linalg.svd(A)
-            X = Va[:, 3]
+            A = np.array([P1[2]*u1[0, j] - P1[0],
+                          P1[2]*u1[1, j] - P1[1],
+                          P2[2]*u2[0, j] - P2[0],
+                          P2[2]*u2[1, j] - P2[1]])
+
+            [Ua, Da, Va_t] = np.linalg.svd(A)
+            X = Va_t[3, :]
             X = X/X[3]  # convert to homogenous 4x1
 
-            if ((P1@X)[2] < 0).any() or ((P2@X)[2].any() < 0).any():
+            if (P1@X)[2] < 0 or (P2@X)[2] < 0:
+                print(i)
+                print((P1@X)[2])
+                print((P2@X)[2])
+                print()
                 correct = False
                 break
 
@@ -95,21 +100,32 @@ def EutoRt(E, u1, u2):
            return R, t
 
     # return this if there is no valid E decomposition
-    R = np.array([])
-    t = np.vstack([1, 0, 1])  # just random t
+    R = np.eye(3)
+    t = np.zeros((3, 1))  # just random t
     return R, t
 
 
 # binocular reconstruction by DLT triangulation
 def Pu2X(P1, P2, u1, u2):
-    #return X
-    return []
+    n_points = u1.shape[1]
+    X = np.zeros((4, n_points))
+    for i in range(n_points):
+        A = np.array([P1[0] - P1[2]*u1[0, i],
+                      P1[1] - P1[2]*u1[1, i],
+                      P2[0] - P2[2]*u2[0, i],
+                      P2[1] - P2[2]*u2[1, i]])
+        [Ua, Da, Vat] = np.linalg.svd(A)
+        x = Vat[3, :]
+        x = x/x[3]  # convert to homogenous 4x1
+        X[:, i] = x
+
+    return X
 
 
 # sampson error on epipolar geometry
 def err_F_sampson(F, u1, u2):
-    e = (u2.T*F*u1)**2/(F@u1[0]**2 + F@u1[1]**2 + F.T@u2*2 + F.T@u2*2)
-    e = math.sqrt(e)
+    e = (u2.T@F@u1)**2/((F@u1)[0]**2 + (F@u1)[1]**2 + (F.T@u2)[0]**2 + (F.T@u2)[1]**2)
+    e = np.sqrt(e)
     return e
 
 
