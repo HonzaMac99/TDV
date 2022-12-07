@@ -61,8 +61,11 @@ def sqc(x):
 
 # essential matrix decomposition with cheirality
 def EutoRt(E, u1, u2):
-    params = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
     n_points = u1.shape[1]
+    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+
+    params = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
     [U, D, V_t] = np.linalg.svd(E)
 
     for i in range(4):
@@ -89,10 +92,6 @@ def EutoRt(E, u1, u2):
             X = X/X[3]  # convert to homogenous 4x1
 
             if (P1@X)[2] < 0 or (P2@X)[2] < 0:
-                print(i)
-                print((P1@X)[2])
-                print((P2@X)[2])
-                print()
                 correct = False
                 break
 
@@ -108,12 +107,15 @@ def EutoRt(E, u1, u2):
 # binocular reconstruction by DLT triangulation
 def Pu2X(P1, P2, u1, u2):
     n_points = u1.shape[1]
+    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+
     X = np.zeros((4, n_points))
     for i in range(n_points):
-        A = np.array([P1[0] - P1[2]*u1[0, i],
-                      P1[1] - P1[2]*u1[1, i],
-                      P2[0] - P2[2]*u2[0, i],
-                      P2[1] - P2[2]*u2[1, i]])
+        A = np.array([P1[2]*u1[0, i] - P1[0],
+                      P1[2]*u1[1, i] - P1[1],
+                      P2[2]*u2[0, i] - P2[0],
+                      P2[2]*u2[1, i] - P2[1]])
         [Ua, Da, Vat] = np.linalg.svd(A)
         x = Vat[3, :]
         x = x/x[3]  # convert to homogenous 4x1
@@ -124,8 +126,17 @@ def Pu2X(P1, P2, u1, u2):
 
 # sampson error on epipolar geometry
 def err_F_sampson(F, u1, u2):
-    e = (u2.T@F@u1)**2/((F@u1)[0]**2 + (F@u1)[1]**2 + (F.T@u2)[0]**2 + (F.T@u2)[1]**2)
-    e = np.sqrt(e)
+    n_points = u1.shape[1]
+
+    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+
+    e = np.zeros(n_points)
+    for i in range(n_points):
+        u1_i = np.vstack(u1[:, i])
+        u2_i = np.vstack(u2[:, i])
+        e[i] = float(u2_i.T@F@u1_i)**2/float((F@u1_i)[0]**2 + (F@u1_i)[1]**2 + (F.T@u2_i)[0]**2 + (F.T@u2_i)[1]**2)
+
     return e
 
 
