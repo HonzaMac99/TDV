@@ -6,8 +6,10 @@ def p5gb( u1, u2 ):
     Five-point calibrated relative pose problem (Grobner basis).
     Es = p5gb( u1, u2 ) computes the esential matrices E according to 
     Nister-PAMI2004 and Stewenius-PRS2006.
+    
     Input:
       u1, u2 ..  3x5 matrices, five corresponding points, HOMOGENEOUS coord.
+      
     Output:
       Es .. list of possible essential matrices
     """
