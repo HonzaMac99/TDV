@@ -64,7 +64,8 @@ def get_line_boundaries(line, boundaries):
 
 
 # boundary of the image
-orig_boundaries = np.array([[1, 1, 800, 800], [1, 600, 600, 1]])
+orig_boundaries = np.array([[1,   1, 800, 800],
+                            [1, 600, 600,   1]])
 plot_boundaries(orig_boundaries)
 orig_boundaries_hom = tb.e2p(orig_boundaries)
 
