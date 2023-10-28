@@ -137,6 +137,8 @@ def find_model(points, theta, probability, mode=0, lsq=0):
     return best_line
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+
 probability = 0.99
 theta = 5
 run_times = 100
