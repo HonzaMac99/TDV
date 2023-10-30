@@ -52,18 +52,6 @@ corresp = np.genfromtxt('books_m12.txt', dtype='int')
 # plt.show()
 
 
-# # compute the average feature distance for thresholding the ransac
-# n_crp = corresp.shape[0]
-# avg_crp_err = 0
-# for i in range(n_crp):
-#     p1 = features1[corresp[i, 0]]
-#     p2 = features2[corresp[i, 1]]
-#     err = math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-#     avg_crp_err += err
-# avg_crp_err /= n_crp
-# print("Average correspondence error: ", avg_crp_err)
-
-
 # find the first homography Ha
 best_H = np.zeros((3, 3))
 best_points1 = np.zeros((2, 4))
@@ -74,7 +62,7 @@ n_crp = corresp.shape[0]
 k = 0
 support = 0
 k_max = 100
-theta = 10  # avg_crp_err
+theta = 3  # 3 pixels
 probability = 0.99
 best_support = 0
 while k <= k_max:
@@ -89,8 +77,8 @@ while k <= k_max:
     for i in range(4):
         [u1, v1] = points1[:, i]
         [u2, v2] = points2[:, i]
-        A[i]   = [ u1,  v1, 1.0, 0.0, 0.0, 0.0, -u2*u1, -u2*v1, -u2]
-        A[i+1] = [0.0, 0.0, 0.0,  u1,  v1, 1.0, -v2*u1, -v2*v1, -v2]
+        A[2*i]   = [ u1,  v1, 1.0, 0.0, 0.0, 0.0, -u2*u1, -u2*v1, -u2]
+        A[2*i+1] = [0.0, 0.0, 0.0,  u1,  v1, 1.0, -v2*u1, -v2*v1, -v2]
 
     [U, S, V] = np.linalg.svd(A)
     h = V[-1]
@@ -116,8 +104,8 @@ while k <= k_max:
         print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
     k += 1
-    w = (support + 1) / n_crp
-    k_max = math.log(1 - probability) / math.log(1 - w ** 2)
+    # w = (support + 1) / n_crp
+    # k_max = math.log(1 - probability) / math.log(1 - w ** 2)
 
     # print("k:", k)
     # print("k_max:", k_max)
