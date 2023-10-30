@@ -52,19 +52,21 @@ corresp = np.genfromtxt('books_m12.txt', dtype='int')
 # plt.show()
 
 
-# find the first homography Ha
+# find the first homography Ha -----------------------------------------------------------------------------------------
+
 best_H = np.zeros((3, 3))
 best_points1 = np.zeros((2, 4))
 best_points2 = np.zeros((2, 4))
+inlier_idxs = []
 
 rng = np.random.default_rng()
 n_crp = corresp.shape[0]
 k = 0
-support = 0
 k_max = 100
-theta = 3  # 3 pixels
-probability = 0.99
+support = 0
 best_support = 0
+theta = 2  # pixels
+probability = 0.995
 while k <= k_max:
     random_corresp = rng.choice(corresp, 4, replace=False)
     points1 = np.zeros((2, 4))
@@ -95,6 +97,7 @@ while k <= k_max:
         d2 = math.sqrt((p1[0] - p2_proj[0])**2 + (p1[1] - p2_proj[1])**2)
         if (d1 + d2)/2 < theta:
             support += 1
+            inlier_idxs.append(i)
 
     if support > best_support:
         best_support = support
@@ -104,57 +107,59 @@ while k <= k_max:
         print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
     k += 1
-    # w = (support + 1) / n_crp
-    # k_max = math.log(1 - probability) / math.log(1 - w ** 2)
+    w = (support + 1) / n_crp
+    k_max = math.log(1 - probability) / math.log(1 - w ** 2)
 
-    # print("k:", k)
-    # print("k_max:", k_max)
-    # print("support:", support)
-    # print("-------------")
-    # print("")
-
-print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
-
-
-print("Best homography H:")
-print(best_H)
+print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]")
 best_H_inv = np.linalg.inv(best_H)
 
-fig, (ax1, ax2) = plt.subplots(1, 2)
+# ---------------------------------------------------------------------------------------------------------------------
 
-############################## first image ##############################
-# ax1.imshow(book1)
-ax1.set_title("Projected to img 1")
 
-ax1.scatter(features1[:, 0], features1[:, 1], s=0.5, c='black')
-ax1.scatter(features2[:, 0], features2[:, 1], s=0.2, c='gray')
-f2_proj = tb.p2e(best_H_inv@tb.e2p(features2.T)).T
-ax1.scatter(f2_proj[:, 0], f2_proj[:, 1], s=0.2, c='red')
+# ################################### plot H_a ###################################
+#
+# fig, (ax1, ax2) = plt.subplots(1, 2)
+# # ax1.imshow(book1)
+# ax1.set_title("Projected to img 1")
+#
+# ax1.scatter(features1[:, 0], features1[:, 1], s=0.5, c='black')
+# ax1.scatter(features2[:, 0], features2[:, 1], s=0.2, c='gray')
+# f2_proj = tb.p2e(best_H_inv@tb.e2p(features2.T)).T
+# ax1.scatter(f2_proj[:, 0], f2_proj[:, 1], s=0.2, c='red')
+#
+# # plot the 4 points used for H estimation
+# ax1.scatter(best_points1[0, :], best_points1[1, :], s=30.0, c='black', label="Orig. features")
+# ax1.scatter(best_points2[0, :], best_points2[1, :], s=12.0, c='gray', label="Corresp. features")
+# bp2_proj = tb.p2e(best_H_inv@tb.e2p(best_points2)).T
+# ax1.scatter(bp2_proj[:, 0], bp2_proj[:, 1], s=12.0, c='red', label="Projected corresp. features")
+#
+# ax1.legend()
+#
+# # ax2.imshow(book2)
+# ax2.set_title("Projected to img 2")
+# ax2.scatter(features2[:, 0], features2[:, 1], s=0.5, c='black')
+# ax2.scatter(features1[:, 0], features1[:, 1], s=0.2, c='gray')
+# f1_proj = tb.p2e(best_H@tb.e2p(features1.T)).T
+# ax2.scatter(f1_proj[:, 0], f1_proj[:, 1], s=0.2, c='green')
+#
+# # plot the 4 points used for H estimation
+# ax2.scatter(best_points2[0, :], best_points2[1, :], s=30.0, c='black', label="Orig. features")
+# ax2.scatter(best_points1[0, :], best_points1[1, :], s=12.0, c='gray', label="Corresp. features")
+# bp1_proj = tb.p2e(best_H@tb.e2p(best_points1)).T
+# ax2.scatter(bp1_proj[:, 0], bp1_proj[:, 1], s=12.0, c='green', label="Projected corresp features")
+#
+# ax2.legend()
+# plt.show()
+#
+# ################################################################################
 
-# plot the 4 points used for H estimation
-ax1.scatter(best_points1[0, :], best_points1[1, :], s=30.0, c='black', label="Orig. features")
-ax1.scatter(best_points2[0, :], best_points2[1, :], s=12.0, c='gray', label="Corresp. features")
-bp2_proj = tb.p2e(best_H_inv@tb.e2p(best_points2)).T
-ax1.scatter(bp2_proj[:, 0], bp2_proj[:, 1], s=12.0, c='red', label="Projected corresp. features")
+# create corresp array without current inliers
+new_corresp = []
+for idx in inlier_idxs:
+    new_corresp.append(corresp[idx])
+corresp = np.array(new_corresp)
 
-ax1.legend()
 
-############################## second image ##############################
-# ax2.imshow(book2)
-ax2.set_title("Projected to img 2")
-ax2.scatter(features2[:, 0], features2[:, 1], s=0.5, c='black')
-ax2.scatter(features1[:, 0], features1[:, 1], s=0.2, c='gray')
-f1_proj = tb.p2e(best_H@tb.e2p(features1.T)).T
-ax2.scatter(f1_proj[:, 0], f1_proj[:, 1], s=0.2, c='green')
-
-# plot the 4 points used for H estimation
-ax2.scatter(best_points2[0, :], best_points2[1, :], s=30.0, c='black', label="Orig. features")
-ax2.scatter(best_points1[0, :], best_points1[1, :], s=12.0, c='gray', label="Corresp. features")
-bp1_proj = tb.p2e(best_H@tb.e2p(best_points1)).T
-ax2.scatter(bp1_proj[:, 0], bp1_proj[:, 1], s=12.0, c='green', label="Projected corresp features")
-
-ax2.legend()
-plt.show()
 
 
 
