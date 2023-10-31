@@ -8,28 +8,31 @@ import math
 import copy
 import sys
 
-def inside_img(coord_x, coord_y):
-    return 1 <= int(coord_x) <= 800 and 1 <= int(coord_y) <= 600
+def get_line_boundaries(plot_line, img):
+    min_x = 1
+    min_y = 1
+    max_x = img.shape[1]
+    max_y = img.shape[0]
 
-# finds the parameters of the line defined by two points m1 and m2
-def get_line(m1, m2):
-    n = np.cross(m1, m2)
-    return n
+    boundaries = np.array([[min_x, min_x, max_x, max_x],
+                           [min_y, max_y, max_y, min_y]])
+    boundaries_hom = tb.e2p(boundaries)
 
-# finds the cross point of two lines n1 and n2
-def get_cross(n1, n2):
-    m = np.cross(n1, n2)
-    return np.array([m]).T
+    # get line vectors of the boundaries
+    a_line = np.cross(boundaries_hom[:, 0], boundaries_hom[:, 1])
+    b_line = np.cross(boundaries_hom[:, 1], boundaries_hom[:, 2])
+    c_line = np.cross(boundaries_hom[:, 2], boundaries_hom[:, 3])
+    d_line = np.cross(boundaries_hom[:, 3], boundaries_hom[:, 0])
+    bnd_lines = [a_line, b_line, c_line, d_line]
 
-def get_line_boundaries(line, boundaries):
     line_boundaries = np.zeros([2, 2])
     count = 0
-    for bnd_line in boundaries:
-        line_end = tb.p2e(get_cross(line, bnd_line))
+    for bnd_line in bnd_lines:
+        line_end = tb.p2e((np.cross(plot_line, bnd_line).reshape(3, 1)))
         x = line_end[0]
         y = line_end[1]
         # plt.plot(x, y, "oy")
-        if inside_img(x, y):
+        if 1 <= int(x) <= max_x and 1 <= int(y) <= max_y:
             line_end = np.reshape(line_end, (1, 2))
             line_boundaries[:, count] = line_end
             count += 1
@@ -129,7 +132,7 @@ corresp = np.genfromtxt('books_m12.txt', dtype='int')
 
 
 # -------------------------------------- estimate the first homography Ha -----------------------------------------
-print("Estimationg Ha")
+print("Estimating Ha")
 best_Ha = np.zeros((3, 3))
 best_points1 = np.zeros((2, 4))
 best_points2 = np.zeros((2, 4))
@@ -209,7 +212,7 @@ corresp = np.array(new_corresp)
 
 
 # -------------------------------------- estimate the homology and second homography Hb -----------------------------------------
-print("Estimationg Hb")
+print("Estimating Hb")
 best_Hb = np.zeros((3, 3))
 best_points1 = np.zeros((2, 3))
 best_points2 = np.zeros((2, 3))
@@ -303,13 +306,12 @@ for i in range(n_crp):
         outliers.append(corresp[i])
 outliers = np.array(outliers)
 
-# plot the results of the first (dominant) homography estimation
-
+# plot the results
 fig, ax = plt.subplots()
-
-ax.imshow(book1)
 ax.set_title("results")
+ax.imshow(book1)
 
+# plot the outliers first
 for i in range(len(outliers)):
     idx1 = outliers[i][0]
     idx2 = outliers[i][1]
@@ -317,6 +319,7 @@ for i in range(len(outliers)):
     ax.plot([features1[idx1, 0], features2[idx2, 0]],
             [features1[idx1, 1], features2[idx2, 1]], color='black')
 
+# plot inliers of the first homography
 for i in range(len(ha_inliers)):
     idx1 = ha_inliers[i][0]
     idx2 = ha_inliers[i][1]
@@ -324,6 +327,7 @@ for i in range(len(ha_inliers)):
     ax.plot([features1[idx1, 0], features2[idx2, 0]],
             [features1[idx1, 1], features2[idx2, 1]], color='red')
 
+# plot the inliers of the second homography
 for i in range(len(hb_inliers)):
     idx1 = hb_inliers[i][0]
     idx2 = hb_inliers[i][1]
@@ -331,24 +335,17 @@ for i in range(len(hb_inliers)):
     ax.plot([features1[idx1, 0], features2[idx2, 0]],
             [features1[idx1, 1], features2[idx2, 1]], color='green')
 
-
-boundaries = np.array([[1,   1, 800, 800],
-                       [1, 600, 600,   1]])
-boundaries_hom = tb.e2p(boundaries)
-
-# get line vectors of the boundaries
-a_line = get_line(boundaries_hom[:, 0], boundaries_hom[:, 1])
-b_line = get_line(boundaries_hom[:, 1], boundaries_hom[:, 2])
-c_line = get_line(boundaries_hom[:, 2], boundaries_hom[:, 3])
-d_line = get_line(boundaries_hom[:, 3], boundaries_hom[:, 0])
-lines = [a_line, b_line, c_line, d_line]
-
-a_boundaries = get_line_boundaries(a, lines)
+# draw the division line between the homographies
+a_boundaries = get_line_boundaries(a, book1)
 plt.plot(a_boundaries[0], a_boundaries[1], "m-")
 
 plt.show()
 
-...
+
+
+
+
+
 
 
 
