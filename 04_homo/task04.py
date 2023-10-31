@@ -5,8 +5,35 @@ import matplotlib.image as mpimg
 from matplotlib import cbook
 import toolbox as tb
 import math
+import copy
 import sys
 
+def inside_img(coord_x, coord_y):
+    return 1 <= int(coord_x) <= 800 and 1 <= int(coord_y) <= 600
+
+# finds the parameters of the line defined by two points m1 and m2
+def get_line(m1, m2):
+    n = np.cross(m1, m2)
+    return n
+
+# finds the cross point of two lines n1 and n2
+def get_cross(n1, n2):
+    m = np.cross(n1, n2)
+    return np.array([m]).T
+
+def get_line_boundaries(line, boundaries):
+    line_boundaries = np.zeros([2, 2])
+    count = 0
+    for bnd_line in boundaries:
+        line_end = tb.p2e(get_cross(line, bnd_line))
+        x = line_end[0]
+        y = line_end[1]
+        # plt.plot(x, y, "oy")
+        if inside_img(x, y):
+            line_end = np.reshape(line_end, (1, 2))
+            line_boundaries[:, count] = line_end
+            count += 1
+    return line_boundaries
 
 # show the images and their feature points
 def plot_features(img1, img2, features1, features2):
@@ -102,10 +129,12 @@ corresp = np.genfromtxt('books_m12.txt', dtype='int')
 
 
 # -------------------------------------- estimate the first homography Ha -----------------------------------------
+print("Estimationg Ha")
 best_Ha = np.zeros((3, 3))
 best_points1 = np.zeros((2, 4))
 best_points2 = np.zeros((2, 4))
 inlier_idxs = []
+best_inlier_idxs = []
 
 rng = np.random.default_rng()
 n_crp = corresp.shape[0]
@@ -113,8 +142,8 @@ k = 0
 k_max = 100
 support = 0
 best_support = 0
-theta = 2  # pixels
-probability = 0.995
+theta = 3  # pixels
+probability = 0.99
 while k <= k_max:
     random_corresp = rng.choice(corresp, 4, replace=False)
     points1 = np.zeros((2, 4))
@@ -136,6 +165,7 @@ while k <= k_max:
     Ha_inv = np.linalg.inv(Ha)
 
     support = 0
+    inlier_idxs = []
     for i in range(n_crp):
         p1 = features1[corresp[i, 0]].reshape((2, 1))
         p2 = features2[corresp[i, 1]].reshape((2, 1))
@@ -149,6 +179,7 @@ while k <= k_max:
 
     if support > best_support:
         best_support = support
+        best_inlier_idxs = inlier_idxs
         best_Ha = Ha
         best_points1 = points1
         best_points2 = points2
@@ -160,6 +191,7 @@ while k <= k_max:
 
 print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]")
 Ha = best_Ha
+inlier_idxs = best_inlier_idxs
 Ha_inv = np.linalg.inv(Ha)
 
 # plot the results of the first (dominant) homography estimation
@@ -175,20 +207,23 @@ for i in range(n_crp):
         new_corresp.append(corresp[i])
 corresp = np.array(new_corresp)
 
+
 # -------------------------------------- estimate the homology and second homography Hb -----------------------------------------
+print("Estimationg Hb")
 best_Hb = np.zeros((3, 3))
 best_points1 = np.zeros((2, 3))
 best_points2 = np.zeros((2, 3))
 inlier_idxs = []
+a = np.zeros((1, 3))
 
 rng = np.random.default_rng()
 n_crp = corresp.shape[0]
 k = 0
-k_max = 100
+k_max = 1000
 support = 0
 best_support = 0
-theta = 2  # pixels
-probability = 0.995
+theta = 3  # pixels
+probability = 0.99
 while k <= k_max:
     random_corresp = rng.choice(corresp, 3, replace=False)
     points1 = np.zeros((2, 3))
@@ -211,10 +246,12 @@ while k <= k_max:
                   u2[0]*u_2[2] - u2[2]*u_2[0],
                   u3[0]*u_3[2] - u3[2]*u_3[0]])
 
-    a = np.linalg.solve(A, b)
+    # # solve Aa = b
+    # a = np.linalg.solve(A, b)
+    A_inv = np.linalg.inv(A)
+    a = A_inv@b
 
-    H = np.eye(3) + v@a.T
-    H_inv = np.linalg.inv(H)
+    H = np.eye(3) + v.reshape(3, 1)@a.reshape((1, 3))
 
     Hb = Ha@H
     Hb_inv = np.linalg.inv(Hb)
@@ -226,13 +263,13 @@ while k <= k_max:
     # ax.plot([a1[0], a2[0]], [a1[1], a2[1]], "v--")
     # plt.show()
 
-
     support = 0
+    inlier_idxs = []
     for i in range(n_crp):
         p1 = features1[corresp[i, 0]].reshape((2, 1))
         p2 = features2[corresp[i, 1]].reshape((2, 1))
-        p1_proj = tb.p2e(Hb_inv@tb.e2p(p1))  # img1 --> img2
-        p2_proj = tb.p2e(Hb@tb.e2p(p2))      # img2 --> img1
+        p1_proj = tb.p2e(Hb@tb.e2p(p1))      # img1 --> img2
+        p2_proj = tb.p2e(Hb_inv@tb.e2p(p2))  # img2 --> img1
         d1 = math.sqrt((p2[0] - p1_proj[0])**2 + (p2[1] - p1_proj[1])**2)
         d2 = math.sqrt((p1[0] - p2_proj[0])**2 + (p1[1] - p2_proj[1])**2)
         if (d1 + d2)/2 < theta:
@@ -241,6 +278,7 @@ while k <= k_max:
 
     if support > best_support:
         best_support = support
+        best_inlier_idxs = inlier_idxs
         best_Hb = Hb
         best_points1 = points1
         best_points2 = points2
@@ -252,6 +290,7 @@ while k <= k_max:
 
 print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]")
 Hb = best_Hb
+inlier_idxs = best_inlier_idxs
 best_H_inv = np.linalg.inv(Hb)
 
 # create corresp array without current inliers
@@ -265,11 +304,51 @@ for i in range(n_crp):
 outliers = np.array(outliers)
 
 # plot the results of the first (dominant) homography estimation
-# plot_hb(book1, book2, features1, features2, best_points1, best_points2, best_Hb)
+
+fig, ax = plt.subplots()
+
+ax.imshow(book1)
+ax.set_title("results")
+
+for i in range(len(outliers)):
+    idx1 = outliers[i][0]
+    idx2 = outliers[i][1]
+    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='black')
+    ax.plot([features1[idx1, 0], features2[idx2, 0]],
+            [features1[idx1, 1], features2[idx2, 1]], color='black')
+
+for i in range(len(ha_inliers)):
+    idx1 = ha_inliers[i][0]
+    idx2 = ha_inliers[i][1]
+    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='red')
+    ax.plot([features1[idx1, 0], features2[idx2, 0]],
+            [features1[idx1, 1], features2[idx2, 1]], color='red')
+
+for i in range(len(hb_inliers)):
+    idx1 = hb_inliers[i][0]
+    idx2 = hb_inliers[i][1]
+    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='green')
+    ax.plot([features1[idx1, 0], features2[idx2, 0]],
+            [features1[idx1, 1], features2[idx2, 1]], color='green')
 
 
+boundaries = np.array([[1,   1, 800, 800],
+                       [1, 600, 600,   1]])
+boundaries_hom = tb.e2p(boundaries)
 
+# get line vectors of the boundaries
+a_line = get_line(boundaries_hom[:, 0], boundaries_hom[:, 1])
+b_line = get_line(boundaries_hom[:, 1], boundaries_hom[:, 2])
+c_line = get_line(boundaries_hom[:, 2], boundaries_hom[:, 3])
+d_line = get_line(boundaries_hom[:, 3], boundaries_hom[:, 0])
+lines = [a_line, b_line, c_line, d_line]
 
+a_boundaries = get_line_boundaries(a, lines)
+plt.plot(a_boundaries[0], a_boundaries[1], "m-")
+
+plt.show()
+
+...
 
 
 
