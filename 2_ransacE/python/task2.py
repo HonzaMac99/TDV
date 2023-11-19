@@ -94,19 +94,24 @@ while k <= k_max:
 
     # check every E solution from p5
     for E in Es:
-        decomposition = decompose_e(E, points1_hom, points2_hom)
-        if not decomposition:
+        # TODO: compute preliminary support before the decomposition?
+        decomp = tb.EutoRt(E, points1_hom, points2_hom)
+        if not decomp:
             continue
         else:
-            R, t = decomposition
+            [R, t] = decomp
 
-        # TODO:
 
         support = 0
         inlier_idxs = []
         for i in range(n_crp):
             p1 = features1[corresp[i, 0]].reshape((2, 1))
             p2 = features2[corresp[i, 1]].reshape((2, 1))
+            u1 = tb.e2p(p1)
+            u2 = tb.e2p(p2)
+
+            # in this case with
+            e_sampson = tb.err_F_sampson(E, u1, u2)
 
             # TODO: check if the points are before camera
             # TODO: use the samson error
