@@ -66,7 +66,7 @@ def plot_corresp(img1, img2, fs1, fs2, corresp):
         idx2 = corresp[i, 1]
         ax1.plot([fs1[idx1, 0], fs2[idx2, 0]],
                  [fs1[idx1, 1], fs2[idx2, 1]], color='green')
-    ax1.scatter(fs1[:, 0], fs1[:, 1], marker='o', s=0.8, c='black')
+    ax1.scatter(fs2[:, 0], fs2[:, 1], marker='o', s=0.8, c='black')
     ax1.set_title("book2.png")
 
     ax2.imshow(img1)
@@ -75,7 +75,7 @@ def plot_corresp(img1, img2, fs1, fs2, corresp):
         idx2 = corresp[i, 1]
         ax2.plot([fs2[idx2, 0], fs1[idx1, 0]],
                  [fs2[idx2, 1], fs1[idx1, 1]], color='red')
-    ax2.scatter(fs2[:, 0], fs2[:, 1], marker='o', s=0.8, c='black')
+    ax2.scatter(fs1[:, 0], fs1[:, 1], marker='o', s=0.8, c='black')
     ax2.set_title("book1.png")
 
     plt.show()
