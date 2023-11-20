@@ -72,11 +72,16 @@ E = np.zeros((3, 3))
 R = np.eye(3)
 t = np.zeros((3, 1))
 
+K = np.array([[2080,    0, 1421],
+              [   0, 2080,  957],
+              [   0,    0,    1]])
+K_inv = np.linalg.inv(K)
+
 rng = np.random.default_rng()
 n_crp = corresp.shape[0]
 k = 0
 k_max = 100
-theta = 3  # pixels
+theta = 100  # mean + 2*st_dev
 probability = 0.99
 while k <= k_max:
     random_corresp = rng.choice(corresp, 5, replace=False)
@@ -89,35 +94,46 @@ while k <= k_max:
     points2_hom = tb.e2p(points2)
 
     Es = p5.p5gb(points1_hom, points2_hom)
-    # for i in range(len(Es)):
-    #     print(Es[i], end="\n\n")
 
     # check every E solution from p5
     for E in Es:
-        # TODO: compute preliminary support before the decomposition?
+
+        # TODO: compute preliminary support before the decomposition
+        F = K_inv.T@E@K_inv
+
+        prelim_support = 0
+        prelim_inlier_idxs = []
+        for i in range(n_crp):
+            u1 = tb.e2p(features1[corresp[i, 0]].reshape((2, 1)))
+            u2 = tb.e2p(features2[corresp[i, 1]].reshape((2, 1)))
+            e_sampson = tb.err_F_sampson(F, u1, u2)
+            if e_sampson < theta:
+                prelim_support += 1 - e_sampson**2/theta**2
+                prelim_inlier_idxs.append(i)
+
+        if prelim_support < 100:
+            continue
+
         decomp = tb.EutoRt(E, points1_hom, points2_hom)
         if not decomp:
             continue
-        else:
-            [R, t] = decomp
+        [R, t] = decomp
 
+        P1 = np.eye(3, 4)
+        P2 = np.hstack((R, t))
 
         support = 0
         inlier_idxs = []
-        for i in range(n_crp):
-            p1 = features1[corresp[i, 0]].reshape((2, 1))
-            p2 = features2[corresp[i, 1]].reshape((2, 1))
-            u1 = tb.e2p(p1)
-            u2 = tb.e2p(p2)
-
-            # in this case with
-            e_sampson = tb.err_F_sampson(E, u1, u2)
+        for i in range(len(prelim_inlier_idxs)):
+            idx = prelim_inlier_idxs[i]
+            u1 = tb.e2p(features1[corresp[idx, 0]].reshape((2, 1)))
+            u2 = tb.e2p(features2[corresp[idx, 1]].reshape((2, 1)))
 
             # TODO: check if the points are before camera
-            # TODO: use the samson error
+            X = tb.Pu2X(P1, P2, u1, u2)
 
-            error = 4
-            if error < theta:
+            # shouldn't we also check the sampson error?
+            if (P1@X)[2] >= 0 and (P2@X)[2] >= 0:
                 support += 1
                 inlier_idxs.append(i)
 
@@ -138,5 +154,36 @@ E = best_E
 inlier_idxs = best_inlier_idxs
 
 # TODO: plot the inliers of the E
-# plot the results of the first (dominant) homography estimation
-# plot_ha(book1, book2, features1, features2, best_points1, best_points2, best_Ha)
+
+# plot the results
+fig, ax = plt.subplots()
+ax.set_title("results")
+ax.imshow(img1)
+
+print(inlier_idxs)
+
+e_inliers = []
+outliers = []
+for i in range(n_crp):
+    if i in inlier_idxs:
+        e_inliers.append(corresp[i])
+    else:
+        outliers.append(corresp[i])
+
+# plot the outliers first
+for i in range(len(outliers)):
+    idx1 = outliers[i][0]
+    idx2 = outliers[i][1]
+    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='black')
+    ax.plot([features1[idx1, 0], features2[idx2, 0]],
+            [features1[idx1, 1], features2[idx2, 1]], color='black')
+
+# plot inliers of the essential matrix E
+for i in range(len(e_inliers)):
+    idx1 = e_inliers[i][0]
+    idx2 = e_inliers[i][1]
+    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='red')
+    ax.plot([features1[idx1, 0], features2[idx2, 0]],
+            [features1[idx1, 1], features2[idx2, 1]], color='red')
+
+plt.show()
