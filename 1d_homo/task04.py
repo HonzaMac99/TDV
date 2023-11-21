@@ -330,12 +330,3 @@ plt.plot(a_boundaries[0], a_boundaries[1], "m-")
 
 plt.show()
 
-
-
-
-
-
-
-
-
-

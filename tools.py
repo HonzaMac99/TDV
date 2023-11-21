@@ -24,6 +24,39 @@ def TMatrix(t_vec):
     T[:3, 3] = t_vec.reshape(3,)
     return T
 
+
+def get_line_boundaries(plot_line, img):
+    plot_line = plot_line.reshape(1, 3)
+    min_x = 1
+    min_y = 1
+    max_x = img.shape[1]
+    max_y = img.shape[0]
+
+    boundaries = np.array([[min_x, min_x, max_x, max_x],
+                           [min_y, max_y, max_y, min_y]])
+    boundaries_hom = e2p(boundaries)
+
+    # get line vectors of the boundaries
+    a_line = np.cross(boundaries_hom[:, 0], boundaries_hom[:, 1])
+    b_line = np.cross(boundaries_hom[:, 1], boundaries_hom[:, 2])
+    c_line = np.cross(boundaries_hom[:, 2], boundaries_hom[:, 3])
+    d_line = np.cross(boundaries_hom[:, 3], boundaries_hom[:, 0])
+    bnd_lines = [a_line, b_line, c_line, d_line]
+
+    line_boundaries = np.zeros([2, 2])
+    count = 0
+    for bnd_line in bnd_lines:
+        line_end = p2e((np.cross(plot_line, bnd_line).reshape(3, 1)))
+        x = line_end[0]
+        y = line_end[1]
+        # plt.plot(x, y, "oy")
+        if 1 <= int(x) <= max_x and 1 <= int(y) <= max_y:
+            line_end = np.reshape(line_end, (1, 2))
+            line_boundaries[:, count] = line_end
+            count += 1
+    return line_boundaries
+
+
 # ------- predefined toolbox functions -------------------------------------
 
 # euclidean to projective:
@@ -67,6 +100,8 @@ def EutoRt(E, u1, u2):
 
     params = np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
     [U, D, V_t] = np.linalg.svd(E)
+    U = np.linalg.det(U) * U
+    V_t = np.linalg.det(V_t) * V_t
 
     for i in range(4):
         alpha, beta = params[i]

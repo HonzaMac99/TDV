@@ -70,7 +70,10 @@ best_support = 0
 best_inlier_idxs = []
 E = np.zeros((3, 3))
 R = np.eye(3)
+best_R  = np.eye(3)
+
 t = np.zeros((3, 1))
+best_t = np.zeros((3, 1))
 
 K = np.array([[2080,    0, 1421],
               [   0, 2080,  957],
@@ -81,8 +84,8 @@ rng = np.random.default_rng()
 n_crp = corresp.shape[0]
 k = 0
 k_max = 100
-theta = 100  # mean + 2*st_dev
-probability = 0.99
+theta = 3  # err_mean + 2*err_st_dev?
+probability = 0.95
 while k <= k_max:
     random_corresp = rng.choice(corresp, 5, replace=False)
     points1 = np.zeros((2, 5))
@@ -90,56 +93,41 @@ while k <= k_max:
     for i in range(5):
         points1[:, i] = features1[random_corresp[i, 0]]
         points2[:, i] = features2[random_corresp[i, 1]]
-    points1_hom = tb.e2p(points1)
-    points2_hom = tb.e2p(points2)
+    points1_hom = K_inv @ tb.e2p(points1)
+    points2_hom = K_inv @ tb.e2p(points2)
 
     Es = p5.p5gb(points1_hom, points2_hom)
 
     # check every E solution from p5
     for E in Es:
 
-        # TODO: compute preliminary support before the decomposition
-        F = K_inv.T@E@K_inv
-
-        prelim_support = 0
-        prelim_inlier_idxs = []
-        for i in range(n_crp):
-            u1 = tb.e2p(features1[corresp[i, 0]].reshape((2, 1)))
-            u2 = tb.e2p(features2[corresp[i, 1]].reshape((2, 1)))
-            e_sampson = tb.err_F_sampson(F, u1, u2)
-            if e_sampson < theta:
-                prelim_support += 1 - e_sampson**2/theta**2
-                prelim_inlier_idxs.append(i)
-
-        if prelim_support < 100:
-            continue
-
         decomp = tb.EutoRt(E, points1_hom, points2_hom)
         if not decomp:
             continue
         [R, t] = decomp
-
+        F = K_inv.T@E@K_inv
         P1 = np.eye(3, 4)
         P2 = np.hstack((R, t))
 
         support = 0
         inlier_idxs = []
-        for i in range(len(prelim_inlier_idxs)):
-            idx = prelim_inlier_idxs[i]
-            u1 = tb.e2p(features1[corresp[idx, 0]].reshape((2, 1)))
-            u2 = tb.e2p(features2[corresp[idx, 1]].reshape((2, 1)))
+        for i in range(n_crp):
+            u1 = tb.e2p(features1[corresp[i, 0]].reshape((2, 1)))
+            u2 = tb.e2p(features2[corresp[i, 1]].reshape((2, 1)))
+            X = tb.Pu2X(K @ P1, K @ P2, u1, u2)
 
-            # TODO: check if the points are before camera
-            X = tb.Pu2X(P1, P2, u1, u2)
-
-            # shouldn't we also check the sampson error?
-            if (P1@X)[2] >= 0 and (P2@X)[2] >= 0:
-                support += 1
-                inlier_idxs.append(i)
+            # compute the sampson error only for points in front of the camera
+            if (K @ P1 @ X)[2] >= 0 and (K @ P2 @ X)[2] >= 0:
+                e_sampson = tb.err_F_sampson(F, u1, u2)
+                if e_sampson < theta:
+                    support += float(1 - e_sampson**2/theta**2)
+                    inlier_idxs.append(i)
 
         if support > best_support:
             best_support = support
             best_E = E
+            best_R = R
+            best_t = t
             best_inlier_idxs = inlier_idxs
             best_points1 = points1
             best_points2 = points2
@@ -151,16 +139,19 @@ while k <= k_max:
 
 print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]")
 E = best_E
+R = best_R
+t = best_t
+F = K_inv.T @ E @ K_inv
 inlier_idxs = best_inlier_idxs
 
-# TODO: plot the inliers of the E
-
-# plot the results
-fig, ax = plt.subplots()
-ax.set_title("results")
-ax.imshow(img1)
-
+print()
 print(inlier_idxs)
+print("Result E")
+print(E)
+print("Result R")
+print(R)
+print("Result t")
+print(t)
 
 e_inliers = []
 outliers = []
@@ -170,20 +161,57 @@ for i in range(n_crp):
     else:
         outliers.append(corresp[i])
 
-# plot the outliers first
-for i in range(len(outliers)):
-    idx1 = outliers[i][0]
-    idx2 = outliers[i][1]
-    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='black')
-    ax.plot([features1[idx1, 0], features2[idx2, 0]],
-            [features1[idx1, 1], features2[idx2, 1]], color='black')
+# # plot the results
+# fig, ax = plt.subplots()
+# ax.set_title("results")
+# ax.imshow(img1)
+#
+# # plot the outliers first
+# for i in range(len(outliers)):
+#     idx1 = outliers[i][0]
+#     idx2 = outliers[i][1]
+#     ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='black')
+#     ax.plot([features1[idx1, 0], features2[idx2, 0]],
+#             [features1[idx1, 1], features2[idx2, 1]], color='black')
+#
+# # plot inliers of the essential matrix E
+# for i in range(len(e_inliers)):
+#     idx1 = e_inliers[i][0]
+#     idx2 = e_inliers[i][1]
+#     ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='red')
+#     ax.plot([features1[idx1, 0], features2[idx2, 0]],
+#             [features1[idx1, 1], features2[idx2, 1]], color='red')
+#
+# plt.show()
 
-# plot inliers of the essential matrix E
-for i in range(len(e_inliers)):
+
+# plot the epipolar lines
+fig, (ax1, ax2) = plt.subplots(2, 1)
+# ax.set_title("results")
+ax1.imshow(img1)
+ax2.imshow(img2)
+
+colors = ["red", "chocolate", "orange", "yellow", "lime", "cyan", "navy", "violet", "orchid", "pink"]
+for i in range(10):
     idx1 = e_inliers[i][0]
     idx2 = e_inliers[i][1]
-    ax.scatter(features1[idx1, 0], features1[idx1, 1], marker='o', s=0.8, c='red')
-    ax.plot([features1[idx1, 0], features2[idx2, 0]],
-            [features1[idx1, 1], features2[idx2, 1]], color='red')
+    m1 = features1[idx1].reshape((2, 1))
+    m2 = features2[idx2].reshape((2, 1))
+    l1 = F.T @ tb.e2p(m2)
+    l2 = F @ tb.e2p(m1)
+    l1_b = tb.get_line_boundaries(l1, img1)
+    l2_b = tb.get_line_boundaries(l2, img2)
+
+    ax1.scatter(m1[0], m1[1], marker='o', s=0.8, c=colors[i])
+    # ax1.plot([l1_b[0, 0], l1_b[1, 0]], [l1_b[0, 1], l1_b[1, 1]], color=colors[i])
+    ax1.plot([l1_b[0, 0], l1_b[0, 1]], [l1_b[1, 0], l1_b[1, 1]], color=colors[i])
+
+    ax2.scatter(m2[0], m2[1], marker='o', s=0.8, c=colors[i])
+    # ax2.plot([l2_b[0, 0], l2_b[1, 0]], [l2_b[0, 1], l2_b[1, 1]], color=colors[i])
+    ax2.plot([l2_b[0, 0], l2_b[0, 1]], [l2_b[1, 0], l2_b[1, 1]], color=colors[i])
 
 plt.show()
+
+
+
+
