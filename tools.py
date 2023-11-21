@@ -29,8 +29,8 @@ def get_line_boundaries(plot_line, img):
     plot_line = plot_line.reshape(1, 3)
     min_x = 1
     min_y = 1
-    max_x = img.shape[1]
-    max_y = img.shape[0]
+    max_x = img.shape[1]-1
+    max_y = img.shape[0]-1
 
     boundaries = np.array([[min_x, min_x, max_x, max_x],
                            [min_y, max_y, max_y, min_y]])
