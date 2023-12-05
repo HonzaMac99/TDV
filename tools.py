@@ -177,5 +177,29 @@ def err_F_sampson(F, u1, u2):
 
 # sampson correction of correspondences
 def u_correct_sampson(F, u1, u2):
-    #return nu1, nu2
-    return []
+    n_points = u1.shape[1]
+
+    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+    nu1 = u1
+    nu2 = u2
+
+    for i in range(n_points):
+        u1_i = np.vstack(u1[:, i])
+        u2_i = np.vstack(u2[:, i])
+        e = float(u2_i.T@F@u1_i)**2/float((F@u1_i)[0]**2 + (F@u1_i)[1]**2 + (F.T@u2_i)[0]**2 + (F.T@u2_i)[1]**2)
+        u12_vec = np.vstack((u1_i[0],
+                             u1_i[1],
+                             u2_i[0],
+                             u2_i[1]))
+
+        J_t = np.vstack((F[:, 0]@u2_i,
+                         F[:, 1]@u2_i,
+                         F[0, :]@u1_i,
+                         F[1, :]@u1_i))
+
+        new_u12_vec = u12_vec - e * J_t
+        nu1[0:2, i] = new_u12_vec[0:2].reshape(1, 2)
+        nu2[0:2, i] = new_u12_vec[2:4].reshape(1, 2)
+
+    return nu1, nu2

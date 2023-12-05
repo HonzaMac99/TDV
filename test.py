@@ -15,3 +15,4 @@ u2 = np.array([[3.17929982, 1.81941743, 2.12525133, 2.84895834, 3.62118962],
 
 e = tb.EutoRt(E**2, u1, u2)
 print(e)
+nu1, nu2 = tb.u_correct_sampson(E, u1, u2)
