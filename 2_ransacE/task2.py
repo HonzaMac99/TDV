@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import tools as tb
 import math
+import sys
+
+sys.path.append('python')
 import p5
 
 
