@@ -196,7 +196,7 @@ if plot_e_lines:
 
     colors = ["darkred", "chocolate", "darkorange", "gold", "lime", "steelblue", "navy", "indigo", "orchid", "crimson"]
     for i in range(10):
-        idx = (i * 10) % len(e_inliers)  # pick every tenth poin
+        idx = (i * 10) % len(e_inliers)  # pick every tenth point
         idx1 = e_inliers[idx][0]
         idx2 = e_inliers[idx][1]
         m1 = features1[idx1].reshape((2, 1))
