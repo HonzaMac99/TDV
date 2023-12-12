@@ -2,11 +2,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import tools as tb
 import math
 import sys
-
-sys.path.append('python')
+sys.path.append('../')
+sys.path.append('p5/python')
+import tools as tb
 import p5
 
 

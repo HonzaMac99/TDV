@@ -1,5 +1,10 @@
 #ignored by git
 *.zip
 *.pdf
+*.ply
+
+__pycache__
+MeshLab2022.02-linux.AppImage
+
 #�koly directory
 Úkoly/

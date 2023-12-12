@@ -1,0 +1,682 @@
+function corresp = corresp_init( n )
+%CORRESP_INIT  Initialise data structure with correspondence tables.
+%
+%  corresp = corresp_init( n )
+%
+%  Input:
+%    n  .. number of cameras (The cameras will be identified as 1..n)
+%
+%  Output:
+%    corresp .. data structure with empty correspondence tables
+
+% (c) 2010-11-18, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+corresp = struct;
+this.n = n;
+% image-to-image correspondences
+this.m  = cell( n, n );  
+% Correspondences between camera i1 and i2, where i1 ~= i2, are stored in
+% this.m{ min(i1,i2), max(i1,i2) }. I.e., cell matrix this.m has
+% diagonal and under-diagonal entries empty.
+                            
+this.mcount = zeros( n, n );
+% numbers of correspondences
+
+
+% scene-to-image correspondences (pairs [X_id u_id])
+this.Xu = cell( n, 1 );
+this.Xucount = zeros( n, 1 );
+this.Xu_verified = cell( n, 1 ); % flags, tentative or verified
+
+for i=1:n
+  this.Xu{i} = zeros( 0, 2 );
+end
+
+% flag for each camera, true if the camera is selected, false otherwise
+this.camsel = false( 1, n );
+
+% flag: working phase
+this.state = 'init';
+function corresp = corresp_add_pair( corresp, i1, i2, m12 )
+%CORRESP_ADD_PAIR  Add pairwise correspondences into data structure.
+%
+%  corresp = corresp_add_pair( corresp, i1, i2, m12 )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    i1, i2  .. camera pair
+%
+%    m12     .. image-to-image point correspondences between camera i1 and i2.
+%               Rows [ ... ; u1 u2; ... ], where u1 is ID of image point in
+%               the image i1 and u2 is id of image point in the image i2.
+%
+%  Output:
+%    corresp .. modified data structure with correspondence tables
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( ~isequal( this.state, 'init' ) )
+  error( 'Cannot add correspondences now.' );
+end
+
+if( i1 == i2 ), error( 'Pairs must be between different cameras' ), end
+if( i1 < 1 || i2 < 1 || i1 > this.n || i2 > this.n )
+  error( 'Image indices must be in range 1..%i.', this.n );
+end
+
+if( size( m12, 2 ) ~= 2 )
+  error( 'Point correspondences must be in n x 2 matrix.' )
+end
+
+% ensure correct order
+if( i1 > i2 )
+  [i1 i2] = deal( i2, i1 );
+  m12 = m12( :, [2 1] );
+end
+
+if( ~isempty( this.m{i1,i2} ) )
+  error( 'Pair %i-%i allready have correspondences.', i1,i2);
+end
+
+this.m{i1,i2} = m12;
+this.mcount(i1,i2) = size( m12, 1 );
+
+fprintf( '  Image-to-Image: pair %i-%i + %i = %i\n', i1, i2, size( m12, 1 ), ...
+         sum( this.mcount(:) ) );
+function corresp = corresp_start( corresp, i1, i2, inl, xid )
+%CORRESP_START  Select the first two cameras. 
+%
+%  corresp = corresp_start( corresp, i1, i2, inl )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    i1, i2  .. camera pair
+%
+%    inl     .. inliers; indices to image-to-image correspondences between
+%               the two cameras.
+%
+%    xid     .. IDs of 3D points, reconstructed from inliers. Must have the
+%               same size as inl
+%
+%  Output:
+%    corresp .. modified data structure with correspondence tables
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( ~isequal( this.state, 'init' ) )
+  error( 'Cannot run start now.' );
+end
+
+fprintf( '\nAttaching %i,%i ---------\n', i1, i2 );
+
+this.camsel(i1) = 1;
+this.camsel(i2) = 1;
+this.lastjoin = i2;
+
+this.state = 'join';
+corresp = corresp_new_x( corresp, i1, i2, inl, xid );
+
+this.state = 'clear';
+this.lastjoin = 0;
+function corresp = corresp_new_x( corresp, i1, i2, inl, xid )
+%NEW_X  New 3D points.
+%
+%  [ corresp, xid ] = new_x( corresp, i1, i2, inl, xid )
+%
+%  Input
+%    corresp .. data structure with correspondence tables
+%    i1, i2  .. camera pair
+%
+%    inl     .. inliers; indices to image-to-image correspondences between
+%               the two cameras.
+%
+%    xid     .. IDs of 3D points, reconstructed from inliers. Must have the
+%               same size as inl
+%
+%  Output:
+%    corresp .. modified corespondences
+%
+%  Scene-to-image correspondences given inliers and 3D poit IDs are
+%  established and image-to-image correspondences between i1 and i2 are removed.
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( isequal( this.state, 'join' ) )
+  this.state = 'newx'; 
+  this.statecounter = 0;
+end
+
+this.statecounter = this.statecounter + 1;
+
+if( ~isequal( this.state, 'newx' ) )
+  error( 'Bad command order: new_x can be only after a join or new_x.' );
+end
+
+if( i1 > i2 )
+  [i1, i2] = deal( i2, i1 );
+end
+
+if( ~( ( this.camsel(i1) == 1 && this.lastjoin == i2 ) || ...
+       ( this.camsel(i2) == 1 && this.lastjoin == i1 ) ) )
+  error( [ 'New points can be triangulated only between the latest\n' ...
+           'joined camera and some allready selected camera.' ] );
+end
+
+if( ~isequal( size( inl ), size( xid ) ) )
+  error( 'Inliers and IDs of 3D point size must have the same size' );
+end
+
+fprintf( '\nNew X %i-%i --------------\n', i1,i2 );
+
+
+
+xinl1 = size( this.Xu{i1}, 1 ) + [1:length(xid)];
+xinl2 = size( this.Xu{i2}, 1 ) + [1:length(xid)];
+
+n_new = length(inl);
+
+this.Xu{i1} = [ this.Xu{i1}; [ xid(:) this.m{i1,i2}(inl(:),1) ] ];
+this.Xucount(i1) = this.Xucount(i1) + n_new;
+this.Xu_verified{i1}( end+[1:n_new] ) = true;
+
+fprintf( '  Scene-to-Image: i%i + %i ok = %i (%i ok)\n', i1, n_new, ...
+         sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) );
+
+this.Xu{i2} = [ this.Xu{i2}; [ xid(:) this.m{i1,i2}(inl(:),2) ] ];
+this.Xucount(i2) = this.Xucount(i2) + n_new;
+this.Xu_verified{i2}( end+[1:n_new] ) = true;
+
+fprintf( '  Scene-to-Image: i%i + %i ok = %i (%i ok)\n', i2, n_new, ...
+         sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) );
+
+
+
+% remove all edges between i1 and i2
+tmp = size( this.m{i1,i2}, 1 );
+this.m{i1,i2} = [];
+this.mcount(i1,i2) = 0;
+
+fprintf( '  Image-to-Image: pair %i-%i -%i -> 0 = %i\n', i1, i2, ...
+         tmp, sum( this.mcount(:) ) );
+
+
+% propagate image-to-scene correspondences
+corresp = corresp_propagate_x( corresp, i1, xid );
+corresp = corresp_propagate_x( corresp, i2, xid );
+
+function corresp = corresp_verify_x( corresp, i, inl )
+%CORRESP_VERIFY_X  Set unverified scene-to-image correspondences to verified.
+%
+%  corresp = corresp_verify_x( corresp, i, inl )
+%
+%  Input
+%    corresp .. data structure with correspondence tables
+%
+%    i       .. the camera index
+%
+%    inl     .. inliers; indices to scene-to-image correspondences between
+%               image points in the camera i and the 3D points. These are
+%               kept and propagated. Must be indices to un-verified
+%               correspondences. Other un-verified image-to-scene
+%               correspondences in the camera i are deleted.
+%
+%  Output:
+%    corresp .. modified corespondences
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( isequal( this.state, 'join' ) || isequal( this.state, 'newx' ) )
+  this.state = 'verify'; 
+  this.statecounter = 0;
+end
+
+this.statecounter = this.statecounter + 1;
+
+if( ~isequal( this.state, 'verify' ) )
+  error( [ 'Bad command order: verify_x can be only after ' ...
+           'a join, new_x or verify_x.' ] );
+end
+
+if( this.camsel(i) ~= 1 )
+   error( 'Cannot verify in non-selected camera' );
+end
+
+if( any( this.Xu_verified{i}(inl) ) )
+  error( '(Some) inliers are allready verified' );
+end
+
+outl = setdiff( find( ~this.Xu_verified{i} ), inl );
+
+% set the correspondences confirmed
+this.Xu_verified{i}(inl) = true;
+
+
+% get IDS of 3D points that become verified
+xid = this.Xu{i}( inl, 1 ); 
+
+good = this.Xu_verified{i};
+
+
+% keep only verified scene-to-image correspondences
+this.Xu{i} = this.Xu{i}( good, : );
+this.Xu_verified{i} = this.Xu_verified{i}( good );
+this.Xucount(i) = size( this.Xu{i}, 1 );
+
+fprintf( '  Scene-to-Image: i%i - %i tent = %i (%i ok)\n', i, ...
+         length( outl ), sum( this.Xucount(:) ), ...
+         sum( [ this.Xu_verified{:} ] ) );
+
+
+
+% propagate scene-to-image correspondences from this camera
+corresp = corresp_propagate_x( corresp, i, xid );
+
+function [ corresp, xid ] = corresp_join_camera( corresp, i, inl )
+%CORRESP_JOIN_CAMERA  Add a camera to the set of selected cameras.
+%
+%  [ corresp, xid ] = corresp_join_camera( corresp, i, inl )
+%
+%  Input
+%    corresp .. data structure with correspondence tables
+%
+%    i       .. the camera index
+%
+%    inl     .. inliers; indices to scene-to-image correspondences between
+%               image points in the camera i and the 3D points. These are
+%               kept and propagated. Other image-to-scene correspondences in the
+%               camera i are deleted.
+%
+%  Output:
+%    corresp .. modified corespondences
+%
+%    xid     .. identifiers of the 3D points that are kept
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( ~isequal( this.state, 'clear' ) )
+  error( 'Bad command order: cannot join a camera now.' );
+end
+
+if( this.lastjoin )
+  error( 'The previous join was not properly finalised.' );
+end
+
+if( this.camsel(i) ~= 0 || isempty( this.Xu{i} ) )
+   error( 'Cannot join non-green camera' );
+end
+
+if( any( this.Xu_verified{i} ) )
+  error( 'Data structures corruption' );
+end
+
+fprintf( '\nAttaching %i ------------\n', i );
+
+this.state = 'join';
+
+outl = setdiff( 1:size( this.Xu{i}, 1 ), inl );
+
+% add this camera to the set
+this.camsel(i) = 1;
+this.lastjoin = i;
+
+% confirm the inliers
+this.Xu_verified{i}(inl) = true;
+
+
+% keep only the selected scene-to-image correspondences
+this.Xu{i} = this.Xu{i}( inl, : );
+this.Xu_verified{i} = this.Xu_verified{i}( inl );
+this.Xucount(i) = size( this.Xu{i}, 1 );
+
+fprintf( '  Scene-to-Image: i%i - %i tent (%i->ok) = %i (%i ok)\n', i, ...
+         length( outl ), length( inl ), sum( this.Xucount(:) ), ...
+         sum( [ this.Xu_verified{:} ] ) );
+
+
+% get IDS of 3D points that are kept
+xid = this.Xu{i}( :, 1 ); 
+
+
+% propagate scene-to-image correspondences from this camera
+corresp = corresp_propagate_x( corresp, i, xid );
+
+function corresp = corresp_finalize_camera( corresp )
+%CORRESP_FINALIZE_CAMERA  Finalise a join of a camera.
+%
+%  corresp = corresp_finalize_camera( corresp )
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( ~this.lastjoin )
+  error( 'There is no previously joined camera to finalise.' );
+end
+
+if( this.camsel( this.lastjoin ) ~= 1 )
+  error( 'Internal data corrupted.' )
+end
+
+this.state = 'clear';
+
+i = this.lastjoin;
+
+for q = find( this.camsel == 1 )
+  if( q == i ), continue; end
+  
+  if( q < i )
+    [i1, i2] = deal( q, i );
+  else
+    [i1, i2] = deal( i, q );
+  end
+  
+  if( ~isempty( this.m{i1,i2} ) )
+    error( [ 'Found correspondences between cameras %i-%i. ' ...
+             'No corresspondences must remain between selected cameras.' ], ...
+             i1, i2 )
+  end
+
+  if( ~isempty( this.m{i2,i1} ) )
+    error( 'Internal data corrupted.' )
+  end
+end
+
+for i = find( this.camsel )
+  if( ~all( this.Xu_verified{i} ) )
+    error( [ 'There are some unverified scene-to camera correspondences ' ...
+             'in the selected set (cam %i).' ] , i )
+  end
+end
+
+this.lastjoin = 0;
+
+
+
+function m12 = corresp_get_m( corresp, i1, i2 )
+%CORRESP_GET_M  Get pairwise image-to-image correspondences.
+%
+%  m12 = corresp_get_m( corresp, i1, i2 )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    i1, i2  .. camera pair
+%
+%  Output:
+%    m12     .. image-to-image point correspondences between camera i1 and i2.
+%               Rows [ ... ; u1 u2; ... ], where u1 is ID of image point in
+%               the image i1 and u2 is id of image point in the image i2.
+
+% (c) 2010-11-19, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( i1 == i2 ), error( 'Pairs must be between different cameras' ), end
+
+if( i1 < i2 )
+  m12 = this.m{i1,i2};
+elseif( ~isempty( this.m{i2,i1} ) )
+  m12 = this.m{i2,i1}(:, [2 1] );
+else
+  m1 = [];
+end
+function [ Xu Xu_verified] = corresp_get_Xu( corresp, i )
+%CORRESP_GET_XU  Get scene-to-image correspondences.
+%
+%  [ Xu Xu_verified] = corresp_get_Xu( corresp, i )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    i       .. camera ID
+%
+%  Output:
+%    Xu      .. scene-to-image point correspondences for the camera i1.
+%               Rows [ ... ; x u; ... ], where x is ID of a scene point and u
+%               is ID of an image point in the image i.
+%
+%   Xu_verified .. boolean vector, size matching to Xu. Xu_verified(j) is
+%               true if the correspondence Xu(i,:) has been verified
+%               (in CORRESP_JOIN_CAMERA or CORRESP_VERIFY_X), false otherwise.
+
+% (c) 2010-11-19, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+Xu = this.Xu{i};
+Xu_verified = this.Xu_verified{i}(:);
+function [ Xucount Xu_verifiedcount] = corresp_get_Xucount( corresp, ilist )
+%CORRESP_GET_XU  Get scene-to-image correspondence counts.
+%
+%  [ Xucount Xu_verifiedcount] = corresp_get_Xucount( corresp, ilist )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    ilist   .. list of camera IDs
+%
+%  Output:
+%    Xucount .. list of counts of scene-to-image point correspondences for
+%               every camera in the ilist.
+%
+%    Xu_verifiedcount .. counts of corespondences in the confirmed state.
+
+% (c) 2010-11-19, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+Xucount = this.Xucount( ilist );
+Xu_verifiedcount = Xucount;
+for i = 1:length(ilist)
+  Xu_verifiedcount(i) = sum( this.Xu_verified{ilist(i)} );
+end
+function ilist = corresp_get_cneighbours( corresp, i )
+%CORRESP_GET_CNEIGHBOURS  Neighb. selected cams related by image-to-image corr.
+%
+%  ilist = corresp_get_cneighbours( corresp, i )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%    i       .. the camera
+%
+%  Output:
+%    ilist   .. row vector of neighbouring cameras, that are part of the
+%               cluster and are related with the camera i by tentative 
+%               image-to-image correspondences.
+
+% (c) 2010-11-22, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+ilist = false( 1, this.n );
+
+for q = 1:(i-1)
+  ilist(q) = ~isempty( this.m{q,i} );
+end
+
+for q = (i+1):this.n
+  ilist(q) = ~isempty( this.m{i,q} );
+end
+
+ilist = find( ilist & this.camsel );
+function [i n] = corresp_get_green_cameras( corresp, what )
+%CORRESP_GET_GREEN_CAMERAS  Get not-selected cameras having scene-to-image cor.
+%
+%  [i n] = corresp_get_green_cameras( corresp )
+%  [i n] = corresp_get_green_cameras( corresp, 'logical' )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%  Output:
+%    i       .. list of IDs of the green cameras (the first synopsis) or
+%               logical array with true values for the green cameras (the
+%               second synopsis)
+%
+%    n       .. counts of scene points every camera can correspond to. Size
+%               matching to i (!!).
+
+% (c) 2010-11-19, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+i = false( this.n, 1 );
+n = zeros( this.n, 1 );
+
+for k = 1:this.n
+  if( ~this.camsel(k) && ~isempty( this.Xu{k} ) )
+    i(k) = true;
+    n(k) = length( unique( this.Xu{k}(:,1) ) );
+  end
+end
+
+if( nargin > 1 )
+  if( isequal( what, 'logical' ) )
+    % ok
+  else
+    error( 'Unknown value for the 2nd parameter.' );
+  end
+else
+  i = find( i );
+  n = n(i);
+end
+function i = corresp_get_selected_cameras( corresp, what )
+%CORRESP_GET_SELECTED_CAMERAS  Get allready selected cameras.
+%
+%  i = corresp_get_selected_cameras( corresp )
+%  i = corresp_get_selected_cameras( corresp, 'logical' )
+%
+%  Input:
+%    corresp .. data structure with correspondence tables
+%
+%  Output:
+%    i       .. list of IDs of selected cameras (the first synopsis) or
+%               logical array with true values for the selected cameras (the
+%               second synopsis)
+
+% (c) 2010-11-19, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( nargin > 1 )
+  if( isequal( what, 'logical' ) )
+    i = this.camsel;
+  else
+    error( 'Unknown value for the 2nd parameter.' );
+  end
+else
+  i = find( this.camsel );
+end
+function corresp = corresp_propagate_x( corresp, i, xids )
+%CORRESP_PROPAGATE_X Propagete scene-to-image correspondences
+
+% (c) 2010-11-09, Martin Matousek
+% Last change: $Date::                            $
+%              $Revision$
+
+if( ~this.camsel(i) )
+  error( 'Cannot propagate from non-selected camera' );
+end
+
+xinx = findinx( this.Xu{i}(:,1), xids(:) );
+
+% selected corresponding point ids in the camera i (not unique):
+i_xids = this.Xu{i}( xinx, 1 ); 
+i_uids = this.Xu{i}( xinx, 2 );
+
+
+% i1,q
+for q = 1:this.n
+  % also red must be considered !
+  
+  if( q == i ), continue; end
+
+  i1 = min( q, i );
+  i2 = max( q, i );
+  
+  if( i < q )
+    % correspondences are in m{i,q}
+    [ci cq] = deal( 1, 2 ); % i corresponds to the first col, q to the second
+  else
+    % correspondences are in m{q,i}
+    [ci cq] = deal( 2, 1 ); % i corresponds to the second col, q to the first
+  end
+    
+  if( ~isempty( this.m{i1,i2} ) )
+    [inx_i inx_iq] = findinx( i_uids,  this.m{i1,i2}(:,ci) );
+
+    if( ~isempty( inx_i ) )
+      xid = i_xids( inx_i );
+      q_uid = this.m{i1,i2}( inx_iq, cq );
+
+
+      new_Xu = setdiff( [xid q_uid], this.Xu{q}, 'rows' );
+      
+      
+      nxu = size( this.Xu{q}, 1 );
+      this.Xu{q} = [ this.Xu{q}; new_Xu ];
+      
+      mxu = size( this.Xu{q}, 1 );
+      
+      this.Xu_verified{q}((nxu+1):mxu) = false;
+      
+      this.Xucount(q) = size( this.Xu{q}, 1 );
+      fprintf( '  Scene-to-Image: i%i + %i tent = %i (%i ok)\n', q, ...
+               mxu - nxu, sum( this.Xucount(:) ), ...
+               sum( [ this.Xu_verified{:} ] ) );
+
+      
+      
+
+      % remove image-to-image correspondences propagated to scene-to-image
+      this.m{i1,i2}( inx_iq, : ) = [];
+      this.mcount(i1,i2) = size( this.m{i1,i2}, 1 );
+      
+      fprintf( '  Image-to-Image: pair %i-%i -%i -> %i = %i\n', i1, i2, ...
+               length( inx_iq ), this.mcount(i1,i2), ...
+               sum( this.mcount(:) ) );
+
+      
+    end
+  end
+end
+
+
+% ------------------------------------------------------------------------------
+function [inx1 inx2] = findinx( i1, i2 )
+%
+% inx1 = [];
+% inx2 = [];
+% for i = 1:size( i1,1)
+%   for j = 1:size( i2, 1 )
+%     if( isequal( i1(i,:), i2(j,:) ) )
+%       inx1 = [inx1; i];%#ok
+%       inx2 = [inx2; j];%#ok
+%     end
+%   end
+% end
+
+
+inx1 = [];
+inx2 = [];
+for i = 1:size( i1,1)
+  q2 = find( i1(i) == i2 );
+  q1 = zeros( size( q2 ) ) + i;
+  inx1 = [inx1; q1];%#ok
+  inx2 = [inx2; q2];%#ok
+end

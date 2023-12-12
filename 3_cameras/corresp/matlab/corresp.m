@@ -1,0 +1,792 @@
+classdef corresp < handle
+%CORRESP  Class for manipulating multiview pairwise correspondences.
+
+% (c) 2010-11-18 Martin Matousek
+% (c) 2020-11-06 Martin Matousek; rewrittent to class
+% Last change: $Date$
+%              $Revision$
+
+properties
+  verbose
+  draw
+end
+
+
+properties( SetAccess = private )
+  n            % number of cameras
+  m            % image-to-image correspondences
+  mcount       % numbers of correspondences
+  Xu           % scene-to-image correspondences (pairs [X_id u_id])
+  Xucount
+  Xu_verified  % flags, tentative or verified
+  camsel       % flag for each camera, true if it is selected, false otherwise
+  state        % working phase
+  lastjoin
+  statecounter
+  last_xid     % last used xid for automatic numbering of 3Dpoints
+end
+
+
+methods
+
+function this = corresp( n )
+%CORRESP.CORRESP  Constructor.
+%
+%   obj = corresp( n )
+%
+%   Initialises empty correspondence tables.
+%
+%   Input:
+%     n  .. number of cameras (the cameras will be identified as 1..n)
+
+this.n = n;
+this.m  = cell( n, n );
+% Correspondences between camera i1 and i2, where i1 ~= i2, are stored in
+% this.m{ min(i1,i2), max(i1,i2) }. I.e., cell matrix this.m has
+% diagonal and under-diagonal entries empty.
+
+this.mcount = zeros( n, n );
+this.Xu = cell( n, 1 );
+this.Xucount = zeros( n, 1 );
+this.Xu_verified = cell( n, 1 );
+
+for i=1:n
+  this.Xu{i} = zeros( 0, 2 );
+end
+
+this.camsel = false( 1, n );
+this.last_xid = 0;
+
+this.state = 'init';
+this.verbose = 1;
+this.draw = [];
+end
+
+
+function add_pair( this, i1, i2, m12 )
+%CORRESP.ADD_PAIR  Add pairwise correspondences.
+%
+%   obj.add_pair( i1, i2, m12 )
+%
+%   Input:
+%     i1, i2  .. camera pair
+%
+%     m12     .. image-to-image point correspondences between camera i1 and i2.
+%                Rows [ ... ; u1 u2; ... ], where u1 is ID of image point in
+%                the image i1 and u2 is id of image point in the image i2.
+
+if ~isequal( this.state, 'init' )
+  error( 'Cannot add correspondences now.' );
+end
+
+if i1 == i2, error( 'Pairs must be between different cameras' ), end
+
+if i1 < 1 || i2 < 1 || i1 > this.n || i2 > this.n
+  error( 'Image indices must be in range 1..%i.', this.n );
+end
+
+if size( m12, 2 ) ~= 2
+  error( 'Point correspondences must be in n x 2 matrix.' )
+end
+
+% ensure correct order
+if i1 > i2
+  [i1, i2] = deal( i2, i1 );
+  m12 = m12( :, [2 1] );
+end
+
+if ~isempty( this.m{i1,i2} )
+  error( 'Pair %i-%i allready have correspondences.', i1,i2);
+end
+
+this.m{i1,i2} = m12;
+this.mcount(i1,i2) = size( m12, 1 );
+
+if this.verbose > 1
+  fprintf( '  Image-to-Image: pair %i-%i + %i = %i\n', ...
+           i1, i2, size( m12, 1 ), sum( this.mcount(:) ) );
+end
+
+end
+
+
+function start( this, i1, i2, inl, xid )
+%CORRESP.START  Select the first two cameras.
+%
+%   obj.start( i1, i2, inl [, xid] )
+%
+%   Input:
+%     i1, i2  .. camera pair
+%
+%     inl     .. inliers; indices to image-to-image correspondences between
+%                the two cameras.
+%
+%     xid     .. IDs of 3D points, reconstructed from inliers. Must have the
+%                same size as inl or empty/missing (automatically generated)
+
+if ~isequal( this.state, 'init' ), error( 'Cannot run start now.' ); end
+
+if this.verbose
+  fprintf( '\nAttaching %i,%i ---------\n', i1, i2 );
+  fprintf( '  Image-to-Image total: %i\n', sum( this.mcount(:) ) );
+end
+
+this.camsel(i1) = true;
+this.camsel(i2) = true;
+this.lastjoin = i2;
+
+this.state = 'join';
+
+if ~isempty( this.draw )
+  this.draw( this, '4-finish' );
+end
+
+if ~exist( 'xid', 'var' ), xid = []; end
+
+this.new_x( i1, i2, inl, xid );
+
+this.state = 'clear';
+this.lastjoin = 0;
+
+end
+
+
+function new_x( this, i1, i2, inl, xid )
+%CORRESP.NEW_X  New 3D points.
+%
+%   obj.new_x( this, i1, i2, inl [, xid] )
+%
+%   Input:
+%     i1, i2  .. camera pair
+%
+%     inl     .. inliers; indices to image-to-image correspondences between
+%                the two cameras.
+%
+%     xid     .. IDs of 3D points, reconstructed from inliers. Must have the
+%                same size as inl or empty/missing (automatically generated)
+%
+%   Scene-to-image correspondences given inliers and 3D point IDs are
+%   established and image-to-image correspondences between i1 and i2 are removed.
+
+if isequal( this.state, 'join' )
+  this.state = 'newx';
+  this.statecounter = 0;
+end
+
+this.statecounter = this.statecounter + 1;
+
+if ~isequal( this.state, 'newx' )
+  error( 'Bad command order: new_x can be only after a join or new_x.' );
+end
+
+if i1 > i2
+  [i1, i2] = deal( i2, i1 );
+end
+
+if ~( ( this.camsel(i1) && this.lastjoin == i2 ) || ...
+      ( this.camsel(i2) && this.lastjoin == i1 ) )
+  error( [ 'New points can be triangulated only between the latest\n' ...
+           'joined camera and some allready selected camera.' ] );
+end
+
+if ~exist( 'xid', 'var' ), xid = []; end
+
+if isempty( xid )
+  xid = this.last_xid + ( 1:numel( inl ) );
+end
+
+if ~isempty( inl ) || ~isempty( xid ) % if empty, size doesn't matter
+  if ~isequal( size( inl ), size( xid ) )
+    error( 'Inliers and IDs of 3D points must have the same size' );
+  end
+end
+
+if ~isempty( xid )
+  this.last_xid = max( xid );
+end
+
+if this.verbose
+  fprintf( '\nNew X %i-%i --------------\n', i1,i2 );
+  Xu_cnt_0 = sum( this.Xucount(:) );
+  Xu_verified_0 = sum( [ this.Xu_verified{:} ] );
+  m_cnt_0 = sum( this.mcount(:) );
+end
+
+if ~isempty( this.draw )
+  outl = true( size( this.m{i1,i2}, 1 ), 1 );
+  outl( inl ) = false;
+  outl = find( outl );
+
+  this.draw( this, '1-pre', {'m', i1,i2, inl, 1; 'm', i1,i2, outl, -1; } );
+end
+
+xinl1 = size( this.Xu{i1}, 1 ) + ( 1:length(xid) );
+xinl2 = size( this.Xu{i2}, 1 ) + ( 1:length(xid) );
+
+n_new = length(inl);
+
+this.Xu{i1} = [ this.Xu{i1}; [ xid(:), this.m{i1,i2}(inl(:),1) ] ];
+assert( size( this.Xu{i1}, 1 ) == size( unique( this.Xu{i1}, 'rows' ), 1 ) );
+this.Xucount(i1) = this.Xucount(i1) + n_new;
+this.Xu_verified{i1}( end + (1:n_new) ) = true;
+
+if this.verbose > 1
+  fprintf( '  Scene-to-Image: i%i + %i ok = %i (%i ok)\n', i1, n_new, ...
+           sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) );
+end
+
+this.Xu{i2} = [ this.Xu{i2}; [ xid(:), this.m{i1,i2}(inl(:),2) ] ];
+assert( size( this.Xu{i2}, 1 ) == size( unique( this.Xu{i2}, 'rows' ), 1 ) );
+this.Xucount(i2) = this.Xucount(i2) + n_new;
+this.Xu_verified{i2}( end + (1:n_new) ) = true;
+
+if this.verbose > 1
+  fprintf( '  Scene-to-Image: i%i + %i ok = %i (%i ok)\n', i2, n_new, ...
+           sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) );
+end
+
+if ~isempty( this.draw )
+  this.draw( this, '2-in', {'m', i1,i2, inl, 1; 'm', i1,i2, outl, -1;
+                      'x', xid, [], [], [];
+                      'x_u', i1, xinl1, 1, [];
+                      'x_u', i2, xinl2, 1, [];
+                   } );
+end
+
+% remove all edges between i1 and i2
+tmp = size( this.m{i1,i2}, 1 );
+this.m{i1,i2} = [];
+this.mcount(i1,i2) = 0;
+
+if this.verbose > 1
+  fprintf( '  Image-to-Image: pair %i-%i -%i -> 0 = %i\n', i1, i2, ...
+           tmp, sum( this.mcount(:) ) );
+end
+
+if ~isempty( this.draw )
+  this.draw( this, '3-in', { 'x', xid, []; 'xi', i1, xid; 'xi', i2, xid } );
+end
+
+% propagate image-to-scene correspondences
+this.propagate_x( i1, xid, '4-propagate1' );
+this.propagate_x( i2, xid, '5-propagate2' );
+
+if ~isempty( this.draw )
+    this.draw( this, '6-finish' );
+end
+
+if this.verbose
+  fprintf( '  Image-to-Image total: %i -> %i\n', m_cnt_0, sum(this.mcount(:)) );
+  fprintf( '  Scene-to-Image total: %i (%i ok) -> %i (%i ok)\n', ...
+           Xu_cnt_0, Xu_verified_0, ...
+           sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) )
+end
+
+end
+
+
+function verify_x( this, i, inl )
+%CORRESP.VERIFY_X  Set unverified scene-to-image correspondences to verified.
+%
+%   obj.verify_x( i, inl )
+%
+%   Input:
+%     i       .. the camera index
+%
+%     inl     .. inliers; indices to scene-to-image correspondences between
+%                image points in the camera i and the 3D points. These are
+%                kept and propagated. Must be indices to un-verified
+%                correspondences. Other un-verified image-to-scene
+%                correspondences in the camera i are deleted.
+
+if isequal( this.state, 'join' ) || isequal( this.state, 'newx' )
+  this.state = 'verify';
+  this.statecounter = 0;
+end
+
+this.statecounter = this.statecounter + 1;
+
+if ~isequal( this.state, 'verify' )
+  error( [ 'Bad command order: verify_x can be only after ' ...
+           'a join, new_x or verify_x.' ] );
+end
+
+if ~this.camsel(i)
+   error( 'Cannot verify in a non-selected camera' );
+end
+
+if any( this.Xu_verified{i}(inl) )
+  error( '(Some) inliers are allready verified' );
+end
+
+if this.verbose
+  fprintf( '\nVerify X %i --------------\n', i );
+end
+
+% set the correspondences confirmed
+this.Xu_verified{i}(inl) = true;
+
+num_outl = sum( ~this.Xu_verified{i} );
+
+if ~isempty( this.draw )
+  outl = find( ~this.Xu_verified{i} );
+  this.draw( this, '1-pre', {'x_u', i, inl, 1;  'x_u', i, outl, -1 } )
+end
+
+% get IDS of 3D points that become verified
+xid = this.Xu{i}( inl, 1 );
+
+% keep only verified scene-to-image correspondences
+this.Xu{i} = this.Xu{i}( this.Xu_verified{i}, : );
+this.Xu_verified{i} = true( 1, size( this.Xu{i}, 1 ) );
+this.Xucount(i) = size( this.Xu{i}, 1 );
+
+if this.verbose
+  fprintf( '  Scene-to-Image: i%i - %i tent = %i (%i ok)\n', i, ...
+           num_outl, sum( this.Xucount(:) ), ...
+           sum( [ this.Xu_verified{:} ] ) );
+end
+
+if ~isempty( this.draw )
+  this.draw( this, '2-in' );
+end
+
+% propagate scene-to-image correspondences from this camera
+this.propagate_x( i, xid, '3-propagate' );
+
+if ~isempty( this.draw )
+  this.draw( this, '4-finish' );
+end
+
+end
+
+
+function xid = join_camera( this, i, inl )
+%CORRESP.JOIN_CAMERA  Add a camera to the set of selected cameras.
+%
+%   xid = obj.join_camera( i, inl )
+%
+%   Input:
+%     i       .. the camera index
+%
+%     inl     .. inliers; indices to scene-to-image correspondences between
+%                image points in the camera i and the 3D points. These are
+%                kept and propagated. Other image-to-scene correspondences in the
+%                camera i are deleted.
+%
+%   Output:
+%     xid     .. identifiers of the 3D points that are kept
+
+if ~isequal( this.state, 'clear' )
+  error( 'Bad command order: cannot join a camera now.' );
+end
+
+if this.lastjoin
+  error( 'The previous join was not properly finalised.' );
+end
+
+if this.camsel(i) || isempty( this.Xu{i} )
+   error( 'Cannot join non-green camera' );
+end
+
+if any( this.Xu_verified{i} )
+  error( 'Data structures corruption' );
+end
+
+assert( numel( inl ) == numel( unique( inl ) ) )
+
+if this.verbose
+  fprintf( '\nAttaching %i ------------\n', i );
+  Xu_cnt_0 = sum( this.Xucount(:) );
+  Xu_verified_0 = sum( [ this.Xu_verified{:} ] );
+  m_cnt_0 = sum( this.mcount(:) );
+end
+
+this.state = 'join';
+
+num_outl = size( this.Xu{i}, 1 ) - length( inl );
+
+% add this camera to the set
+this.camsel(i) = true;
+this.lastjoin = i;
+
+if ~isempty( this.draw )
+  % confirm the inliers now, for drawin only (later the true array is put here)
+  this.Xu_verified{i}(inl) = true;
+
+  outl = setdiff( 1:size( this.Xu{i}, 1 ), inl );
+  this.draw( this, '1-pre', {'x_u', i, inl, 1; 'x_u', i, outl, -1;
+                      'cam', i, [], [] } )
+end
+
+% keep only the selected scene-to-image correspondences
+this.Xu{i} = this.Xu{i}( inl, : );
+this.Xu_verified{i} = true( 1, size( this.Xu{i}, 1 ) );
+this.Xucount(i) = size( this.Xu{i}, 1 );
+
+if this.verbose
+  fprintf( '  Scene-to-Image: i%i - %i tent (%i->ok) = %i (%i ok)\n', i, ...
+           num_outl, length( inl ), sum( this.Xucount(:) ), ...
+           sum( [ this.Xu_verified{:} ] ) );
+end
+
+% get IDS of 3D points that are kept
+xid = this.Xu{i}( :, 1 );
+
+if ~isempty( this.draw )
+    this.draw( this, '2-in', {'xi', i, xid } );
+end
+
+% propagate scene-to-image correspondences from this camera
+this.propagate_x( i, xid, '3-propagate' );
+
+if ~isempty( this.draw )
+    this.draw( this, '4-finish' );
+end
+
+if this.verbose
+  fprintf( '  Image-to-Image total: %i -> %i\n', m_cnt_0, sum(this.mcount(:)) );
+  fprintf( '  Scene-to-Image total: %i (%i ok) -> %i (%i ok)\n', ...
+           Xu_cnt_0, Xu_verified_0, ...
+           sum( this.Xucount(:) ), sum( [ this.Xu_verified{:} ] ) )
+end
+
+end
+
+
+function finalize_camera( this )
+%CORRESP.FINALIZE_CAMERA  Finalize a join of a camera.
+%
+%   obj.finalize_camera()
+
+if ~this.lastjoin
+  error( 'There is no previously joined camera to finalise.' );
+end
+
+if ~this.camsel( this.lastjoin )
+  error( 'Internal data corrupted.' )
+end
+
+this.state = 'clear';
+
+i = this.lastjoin;
+
+for q = find( this.camsel )
+  if q == i, continue; end
+
+  if q < i
+    [i1, i2] = deal( q, i );
+  else
+    [i1, i2] = deal( i, q );
+  end
+
+  if ~isempty( this.m{i1,i2} )
+    error( [ 'Found correspondences between cameras %i-%i. ' ...
+             'No corresspondences must remain between selected cameras.' ], ...
+           i1, i2 )
+  end
+
+  if ~isempty( this.m{i2,i1} )
+    error( 'Internal data corrupted.' )
+  end
+end
+
+for i = find( this.camsel )
+  if ~all( this.Xu_verified{i} )
+    error( [ 'There are some unverified scene-to camera correspondences ' ...
+             'in the selected set (cam %i).' ] , i )
+  end
+end
+
+this.lastjoin = 0;
+
+end
+
+
+function [ m1, m2 ] = get_m( this, i1, i2 )
+%CORRESP.GET_M  Get pairwise image-to-image correspondences.
+%
+%   [ m1, m2 ] = obj.get_m( i1, i2 )
+%
+%   Input:
+%     i1, i2  .. camera pair
+%
+%   Output:
+%     m1, m2  .. image-to-image point correspondences between camera i1 and i2.
+%                m1 and m2 have same sizes, m1 contains indices of points in
+%                the image i1 and m2 indices of corresponding points in the
+%                image i2
+
+if i1 == i2, error( 'Pairs must be between different cameras' ), end
+
+if i1 < i2
+  m1 = this.m{i1,i2}(:,1);
+  m2 = this.m{i1,i2}(:,2);
+else
+  m1 = this.m{i2,i1}(:,2);
+  m2 = this.m{i2,i1}(:,1);
+end
+
+end
+
+
+function [ X, u, Xu_verified] = get_Xu( this, i )
+%CORRESP.GET_XU  Get scene-to-image correspondences.
+%
+%   [ mX, mu, Xu_verified] = obj.get_Xu( i )
+%
+%   Input:
+%     i       .. camera ID
+%
+%   Output:
+%     X, u    .. scene-to-image point correspondences for the camera i:
+%                X are IDs of a scene points and u are IDs of an image points.
+%
+%     Xu_verified .. boolean vector, size matching to Xu. Xu_verified(j) is
+%                true if the correspondence Xu(i,:) has been verified
+%                (in JOIN_CAMERA or VERIFY_X), false otherwise.
+
+X = this.Xu{i}(:,1);
+u = this.Xu{i}(:,2);
+Xu_verified = this.Xu_verified{i}(:);
+
+end
+
+
+function [ Xucount, Xu_verifiedcount] = get_Xucount( this, ilist )
+%CORRESP.GET_XU  Get scene-to-image correspondence counts.
+%
+%   [ Xucount, Xu_verifiedcount] = obj.get_Xucount( ilist )
+%
+%   Input:
+%     ilist   .. list of camera IDs
+%
+%   Output:
+%     Xucount .. list of counts of scene-to-image point correspondences for
+%                every camera in the ilist.
+%
+%     Xu_verifiedcount .. counts of corespondences in the confirmed state.
+
+Xucount = this.Xucount( ilist );
+Xu_verifiedcount = Xucount;
+for i = 1:length(ilist)
+  Xu_verifiedcount(i) = sum( this.Xu_verified{ilist(i)} );
+end
+
+end
+
+
+function ilist = get_cneighbours( this, i )
+%CORRESP.GET_CNEIGHBOURS  Neighb. selected cams related by image-to-image corr.
+%
+%   ilist = obj.get_cneighbours( i )
+%
+%   Input:
+%     i       .. the camera
+%
+%   Output:
+%     ilist   .. row vector of neighbouring cameras, that are part of the
+%                cluster and are related with the camera i by tentative
+%                image-to-image correspondences.
+
+ilist = false( 1, this.n );
+
+for q = 1:(i-1)
+  ilist(q) = ~isempty( this.m{q,i} );
+end
+
+for q = (i+1):this.n
+  ilist(q) = ~isempty( this.m{i,q} );
+end
+
+ilist = find( ilist & this.camsel );
+
+end
+
+
+function [i, n] = get_green_cameras( this, what )
+%CORRESP.GET_GREEN_CAMERAS  Get not-selected cameras having scene-to-image cor.
+%
+%   [i, n] = obj.get_green_cameras()
+%   [i, n] = obj.get_green_cameras( 'logical' )
+%
+%   Output:
+%     i       .. list of IDs of the green cameras (the first synopsis) or
+%                logical array with true values for the green cameras (the
+%                second synopsis)
+%
+%     n       .. counts of scene points every camera can correspond to. Size
+%                matching to i (!!).
+
+i = false( this.n, 1 );
+n = zeros( this.n, 1 );
+
+for k = 1:this.n
+  if ~this.camsel(k) && ~isempty( this.Xu{k} )
+    i(k) = true;
+    n(k) = length( unique( this.Xu{k}(:,1) ) );
+  end
+end
+
+if nargin > 1
+  if isequal( what, 'logical' )
+    % ok
+  else
+    error( 'Unknown value for the 2nd parameter.' );
+  end
+else
+  i = find( i );
+  n = n(i);
+end
+
+end
+
+
+function i = get_selected_cameras( this, what )
+%CORRESP.GET_SELECTED_CAMERAS  Get allready selected cameras.
+%
+%   i = obj.get_selected_cameras()
+%   i = obj.get_selected_cameras( 'logical' )
+%
+%   Output:
+%     i       .. list of IDs of selected cameras (the first synopsis) or
+%                logical array with true values for the selected cameras (the
+%                second synopsis)
+
+if nargin > 1
+  if isequal( what, 'logical' )
+    i = this.camsel;
+  else
+    error( 'Unknown value for the 2nd parameter.' );
+  end
+else
+  i = find( this.camsel );
+end
+
+end
+
+
+end % meths.
+
+methods ( Access = private )
+
+function propagate_x( this, i, xids, substate )
+%CORRESP.PROPAGATE_X  Propagete scene-to-image correspondences.
+
+if ~this.camsel(i)
+  error( 'Cannot propagate from non-selected camera' );
+end
+
+xids = unique( xids );
+
+xinx = corresp.findinx( this.Xu{i}(:,1), xids(:) );
+
+% selected corresponding point ids in the camera i (not unique):
+i_xids = this.Xu{i}( xinx, 1 );
+i_uids = this.Xu{i}( xinx, 2 );
+
+if ~isempty( this.draw )
+  enh = {'xi', i, xids, []; 'x', xids, [], [] };
+  menh = cell( this.n );
+end
+
+for q = 1:this.n
+  % also red must be considered!
+
+  if q == i, continue; end
+
+  if i < q
+    [i1, i2] = deal( i, q ); % correspondences are in m{i,q}
+    [ci, cq] = deal( 1, 2 ); % i corresponds to the first col, q to the second
+  else
+    [i1, i2] = deal( q, i ); % correspondences are in m{q,i}
+    [ci, cq] = deal( 2, 1 ); % i corresponds to the second col, q to the first
+  end
+
+  if ~isempty( this.m{i1,i2} )
+    [inx_i, inx_iq] = corresp.findinx( i_uids,  this.m{i1,i2}(:,ci) );
+
+    if ~isempty( inx_i )
+      xid = i_xids( inx_i );
+      q_uid = this.m{i1,i2}( inx_iq, cq );
+
+      % do not include X-u correspondences that are allready there
+      keep = true( size( xid ) );
+
+      for k = 1:numel(xid)
+        for p = find( xid(k) == this.Xu{q}(:,1) )'
+          if q_uid(k) == this.Xu{q}(p,2)
+            keep(k) = false;
+          end
+        end
+      end
+      new_Xu = [ xid(keep), q_uid(keep) ];
+
+      % TODO this is hack - i_uid(k) can correspond to more pairs cq
+      % but only the first is used and duplicated now
+      new_Xu = unique( new_Xu, 'rows' );
+
+      nxu = size( this.Xu{q}, 1 );
+      this.Xu{q} = [ this.Xu{q}; new_Xu ];
+      assert( size( this.Xu{q}, 1 ) == size( unique( this.Xu{q}, 'rows' ), 1 ) );
+
+      mxu = size( this.Xu{q}, 1 );
+
+      this.Xu_verified{q}((nxu+1):mxu) = false;
+
+      this.Xucount(q) = size( this.Xu{q}, 1 );
+      if this.verbose > 1
+        fprintf( '  Scene-to-Image: i%i + %i tent = %i (%i ok)\n', q, ...
+                 mxu - nxu, sum( this.Xucount(:) ), ...
+                 sum( [ this.Xu_verified{:} ] ) );
+      end
+
+      if ~isempty( this.draw )
+        enh = [ enh; { 'x_u', q, (nxu+1):mxu, 1 } ]; %#ok
+      end
+
+      % remove image-to-image correspondences propagated to scene-to-image
+      if ~isempty( this.draw )
+        menh{i1,i2} = this.m{i1,i2}( inx_iq, : );
+      end
+
+      this.m{i1,i2}( inx_iq, : ) = [];
+      this.mcount(i1,i2) = size( this.m{i1,i2}, 1 );
+
+      if this.verbose > 1
+        fprintf( '  Image-to-Image: pair %i-%i -%i -> %i = %i\n', i1, i2, ...
+                 length( inx_iq ), this.mcount(i1,i2), sum( this.mcount(:) ) );
+      end
+
+    end
+  end
+end
+
+if ~isempty( this.draw )
+  this.draw( this, substate, enh, menh );
+end
+
+end
+
+end % meths.
+
+
+methods ( Access = private, Static = true )
+
+function [inx1, inx2] = findinx( i1, i2 )
+
+inx1 = [];
+inx2 = [];
+for i = 1:size( i1,1)
+  q2 = find( i1(i) == i2 );
+  q1 = zeros( size( q2 ) ) + i;
+  inx1 = [inx1; q1];%#ok
+  inx2 = [inx2; q2];%#ok
+end
+
+end
+
+end % meths.
+
+
+end % classdef

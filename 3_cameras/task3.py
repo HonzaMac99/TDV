@@ -2,12 +2,17 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import tools as tb
 import math
 import sys
-
-sys.path.append('python')
+sys.path.append('..')
+sys.path.append('p5/python')
+sys.path.append('corresp/python')
+sys.path.append('geom_export/python')
+import tools as tb
 import p5
+import corresp
+import p3p
+import ge
 
 
 def get_inliers_outliers(corresp, inlier_idxs):
@@ -81,7 +86,7 @@ def plot_e_lines(img1, img2, features1, features2, corresp, inlier_idxs, F):
 
 
 def get_3d_points(features1, features2, corresp, inlier_idx, img, P1, P2):
-    sparsity = 30
+    sparsity = 1
     Xs = np.zeros((4, 0))
     colors = []
     for i in range(0, len(inlier_idx), sparsity):
@@ -118,7 +123,7 @@ def ransac_E(features1, features2, corresp, K):
     k = 0
     k_max = 100
     theta = 3  # pixels
-    probability = 0.95
+    probability = 0.95  # 0.40
     while k <= k_max:
         random_corresp = rng.choice(corresp, 5, replace=False)
         points1 = np.zeros((2, 5))
@@ -181,41 +186,51 @@ def ransac_E(features1, features2, corresp, K):
 # -----------------------------------------------------------------------------------------------------------
 
 
-img1 = mpimg.imread('cam1.jpg')
-img2 = mpimg.imread('cam2.jpg')
-features1 = np.genfromtxt('features_01.txt', dtype='float')
-features2 = np.genfromtxt('features_02.txt', dtype='float')
-corresp = np.genfromtxt('corresp_01_02.txt', dtype='int')
-K = np.array([[2080,    0, 1421],
-              [   0, 2080,  957],
-              [   0,    0,    1]])
+img1 = mpimg.imread('scene_1/images/01.jpg')
+img2 = mpimg.imread('scene_1/images/02.jpg')
+features1 = np.genfromtxt('scene_1/corresp/u_01.txt', dtype='float')
+features2 = np.genfromtxt('scene_1/corresp/u_02.txt', dtype='float')
+corresps = np.genfromtxt('scene_1/corresp/m_01_02.txt', dtype='int')
+K = np.loadtxt('scene_1/K.txt', dtype='float')
+print(K)
+# K = np.array([[2080,    0, 1421],
+#               [   0, 2080,  957],
+#               [   0,    0,    1]])
 
 # perform the actual E estimation
-E, R, t, inls = ransac_E(features1, features2, corresp, K)
+E, R, t, inls = ransac_E(features1, features2, corresps, K)
 
 K_inv = np.linalg.inv(K)
 F = K_inv.T @ E @ K_inv
 
 # plot the inliers and outliers
-# plot_inliers(img1, features1, features2, corresp, inls)
+plot_inliers(img1, features1, features2, corresps, inls)
 
 # plot the epipolar lines
-# plot_e_lines(img1, img2, features1, features2, corresp, inls, F)
+# plot_e_lines(img1, img2, features1, features2, corresps, inls, F)
 
+I = np.eye(3, 3)
 P1 = K @ np.eye(3, 4)
 P2 = K @ np.hstack((R, t))
+
 C1 = np.zeros((3, 1))
-C2 = K_inv @ P2 @ np.vstack((C1, 1))
+C2 = -R.T @ t
 Cs = np.hstack((C1, C2))
+# C2 = K_inv @ P2 @ np.vstack((C1, 1))
 
 z1 = np.array([0, 0, 1]).reshape(3, 1)
-z2 = K_inv @ P2 @ np.vstack((z1, 1))
+z2 = C2 + R[2, :].reshape(3, 1)
 z = np.hstack((z1, z2))
+# z2 = K_inv @ P2 @ np.vstack((z1, 1))
+
 
 # plot the centers of cameras
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
-# ax.axis('equal')
+# ax.set_aspect('equal', adjustable='box')
+# ax.set_xlim(-2, 2)
+# ax.set_ylim(-2, 2)
+# ax.set_zlim(-2, 2)
 # ax.axis('off')
 
 # plot the camera centers and the baseline
@@ -230,11 +245,21 @@ for i in range(Cs.shape[1]):
             [Cs[2, i], z[2, i]], c='black')
 
 # get the 3d point with colors
-Xs, colors = get_3d_points(features1, features2, corresp, inls, img1, P1, P2)
+Xs, colors = get_3d_points(features1, features2, corresps, inls, img1, P1, P2)
+
+print(Xs.shape[1])
 for i in range(Xs.shape[1]):
     ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', color=colors[i])
 
 plt.show()
+
+c = corresp.Corresp(12)
+
+g = ge.GePly('out.ply')
+colors = np.array(colors).T
+# g.points(Xs, colors) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
+g.points(Xs) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
+g.close()
 
 
 
