@@ -3,7 +3,8 @@
 *.pdf
 *.ply
 
-__pycache__
+.idea/
+__pycache__/
 MeshLab2022.02-linux.AppImage
 
 #�koly directory
