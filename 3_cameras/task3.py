@@ -107,6 +107,16 @@ def get_3d_points(features1, features2, corresp, inlier_idx, img, P1, P2):
     return Xs, colors
 
 
+def init_corresp(n_cameras):
+    c = corresp.Corresp(n_cameras)
+    c.verbose = 2
+    for i in range(1, n_cameras):
+        for j in range(i+1, n_cameras):
+            f_name =
+            corresps = np.genfromtxt('scene_1/corresp/m_01_02.txt', dtype='int')
+
+
+
 # -------------------------------------- Esential matrix estimation -----------------------------------------
 def ransac_E(features1, features2, corresp, K):
     print("Estimating E")
@@ -253,7 +263,7 @@ for i in range(Xs.shape[1]):
 
 plt.show()
 
-c = corresp.Corresp(12)
+c = init_corresp()
 
 g = ge.GePly('out.ply')
 colors = np.array(colors).T
