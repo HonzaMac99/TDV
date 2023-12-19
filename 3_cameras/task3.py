@@ -16,6 +16,11 @@ import p3p
 import ge
 
 
+class Camera:
+    def __init__(self, cam_id):
+        self.id = cam_id
+
+
 # get the color from the images of the camera pair into the plot:
 def get_3d_colors(f1, f2, crp, inliers_idx, img1, img2, sparsity=1):
     colors = []
@@ -49,42 +54,157 @@ def get_3d_points(features1, features2, corresp, inliers_idx, P1, P2, sparsity=1
 
     return Xs
 
+def get_geometry(R, t):
+    P1 = K @ np.eye(3, 4)
+    P2 = K @ np.hstack((R, t))
+    Ps = np.hstack((P1, P2))
 
-def get_fname(i, j):
-    f_name = ''
+    # camera centers
+    C1 = np.zeros((3, 1))
+    C2 = -R.T @ t
+    Cs = np.hstack((C1, C2))
+
+    # unit points on z axis
+    z1 = np.array([0, 0, 1]).reshape(3, 1)
+    z2 = C2 + R[2, :].reshape(3, 1)
+    zs = np.hstack((z1, z2))
+
+    return Ps, Cs, zs
+
+
+def get_corresps(i, j):
+    i += 1
+    j += 1
     if i < 10 and j < 10:
         f_name = 'm_0{}_0{}.txt'.format(i, j)
     elif i >= 10 and j < 10:
         f_name = 'm_{}_0{}.txt'.format(i, j)
     elif i < 10 and j >= 10:
         f_name = 'm_0{}_{}.txt'.format(i, j)
-    elif i >= 10 and j >= 10:
+    else:
         f_name = 'm_{}_{}.txt'.format(i, j)
-    return f_name
+
+    path = 'scene_1/corresp/{}'.format(f_name)
+    corresps = np.genfromtxt(path, dtype='int')
+    return corresps
+
+def get_feats(i):
+    i += 1
+    if i < 10:
+        f_name = 'u_0{}.txt'.format(i)
+    else:
+        f_name = 'u_{}.txt'.format(i)
+
+    path = 'scene_1/corresp/{}'.format(f_name)
+    feats = np.genfromtxt(path, dtype='int')
+    return feats
+
+def get_img(i):
+    i += 1
+    if i < 10:
+        f_name = '0{}.jpg'.format(i)
+    else:
+        f_name = '{}.jpg'.format(i)
+
+    img = mpimg.imread('scene_1/images/{}'.format(f_name))
+    return img
 
 
-def init_corresp(n_cameras):
+def init_c(n_cameras):
     c = corresp.Corresp(n_cameras)
     c.verbose = 2
     for i in range(n_cameras):
         for j in range(i+1, n_cameras):
-            f_name = get_fname(i+1, j+1)
-            path = 'scene_1/corresp/{}'.format(f_name)
-            corresps = np.genfromtxt(path, dtype='int')
+            corresps = get_corresps(i, j)
             c.add_pair(i, j, corresps)
     return c
 
 
+def get_new_cam(cam_id, Xs, X_corresp, u_corresp, K):
+    ''' get new camera parameters such as R, t and inlier idxs
+        in: Xs ... [4xn] homogenous 3D points
+        in: X_corresp ... array with idxs for Xs
+        in: u_corresp ... array with idxs for features
+    '''
+    print("Estimating new cam R, t")
+
+    best_support = 0
+    best_R = np.zeros((3, 3))
+    best_t = np.zeros((3, 1))
+    best_inlier_idxs = []
+
+    K_inv = np.linalg.inv(K)
+
+    rng = np.random.default_rng()
+    n_crp = corresp.shape[0]
+    k = 0
+    k_max = 100
+    theta = 3  # pixels
+    probability = 0.40  # 0.95
+    while k <= k_max:
+        n = len(X_corresp)
+        rng_idx = rng.choice(np.arange(n), size=3, replace=False)
+
+        Xw = np.zeros((4, 3))
+        U = np.zeros((3, 3))
+        features = get_feats(cam_id)
+        for i in range(3):
+            Xw[:, i] = Xs[rng_idx[i]]
+            U[:, i] = features[u_corresp[rng_idx[i]]]
+        # the points should be rectified first!
+        U_hom = K_inv @ tb.e2p(U)
+
+        Xc = p3p.p3p_grunert(Xw, U_hom)
+        R, t = p3p.XX2Rt_simple(Xs, Xc)
+
+        # use P with K because the points are unrectified!
+        P1 = K @ np.eye(3, 4)
+        P2 = K @ np.hstack((R, t))
+
+        support = 0
+        inlier_idxs = []
+        for i in range(n_crp):
+            u1 = tb.e2p(features1[corresp[i, 0]].reshape((2, 1)))
+            u2 = tb.e2p(features2[corresp[i, 1]].reshape((2, 1)))
+            X = tb.Pu2X(P1, P2, u1, u2)
+
+            # compute the sampson error only for points in front of the camera
+            if (P1 @ X)[2] >= 0 and (P2 @ X)[2] >= 0:
+                e_sampson = tb.err_F_sampson(F, u1, u2)
+                if e_sampson < theta:
+                    support += float(1 - e_sampson**2/theta**2)
+                    inlier_idxs.append(i)
+
+        if support > best_support:
+            best_support = support
+            best_R = R
+            best_t = t
+            best_inlier_idxs = inlier_idxs
+            print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
+
+        k += 1
+        w = (support + 1) / n_crp
+        k_max = math.log(1 - probability) / math.log(1 - w ** 2)
+
+    print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
+
+    # print(inlier_idxs)
+    print("Result R\n", best_R)
+    print("Result t\n", best_t)
+
+    return best_R, best_t, best_inlier_idxs
+
+
 if __name__ == '__main__':
-    img1 = mpimg.imread('scene_1/images/01.jpg')
-    img2 = mpimg.imread('scene_1/images/02.jpg')
-    features1 = np.genfromtxt('scene_1/corresp/u_01.txt', dtype='float')
-    features2 = np.genfromtxt('scene_1/corresp/u_02.txt', dtype='float')
-    # corresps = np.genfromtxt('scene_1/corresp/m_01_02.txt', dtype='int')
+    img1 = get_img(0)
+    img2 = get_img(1)
+    features1 = get_feats(0)
+    features2 = get_feats(1)
+    # corresps = get_corresps(0, 1)
     K = np.loadtxt('scene_1/K.txt', dtype='float')
 
     n_cams = 12
-    c = init_corresp(n_cams)
+    c = init_c(n_cams)
     corresps = np.array(c.get_m(0, 1)).T
 
     # perform the actual E estimation
@@ -95,62 +215,60 @@ if __name__ == '__main__':
     # ep.plot_inliers(img1, features1, features2, corresps, inls)
     # ep.plot_e_lines(img1, img2, features1, features2, corresps, inls, F)
 
-    I = np.eye(3, 3)
-    P1 = K @ np.eye(3, 4)
-    P2 = K @ np.hstack((R, t))
+    P, C, z = get_geometry(R, t)
 
-    # camera centers
-    C1 = np.zeros((3, 1))
-    C2 = -R.T @ t
-    Cs = np.hstack((C1, C2))
-    # C2 = K_inv @ P2 @ np.vstack((C1, 1))
-
-    # unit points on z axis
-    z1 = np.array([0, 0, 1]).reshape(3, 1)
-    z2 = C2 + R[2, :].reshape(3, 1)
-    z = np.hstack((z1, z2))
-    # z2 = K_inv @ P2 @ np.vstack((z1, 1))
-
-    # get the 3d point and their corresponding colors
-    Xs = get_3d_points(features1, features2, corresps, inls, P1, P2)
+    # get initial 3d points and their corresponding colors
+    Xs = get_3d_points(features1, features2, corresps, inls, P[0], P[1])
+    X_ids = np.array([i for i in range(Xs.shape[1])])  # IDs of the reconstructed scene points
     colors = get_3d_colors(features1, features2, corresps, inls, img1, img2)
 
-    X_ids = np.array([i for i in range(Xs.shape[1])])  # IDs of the reconstructed scene points
     c.start(0, 1, inls, X_ids)
 
-    tent_cams = c.get_green_cameras()
-    max_tent_crp = 0
-    best_cam = None
-    for cam in tent_cams:
-        tent_crp = c.get_Xucount(cam)
-        if tent_crp > max_tent_crp:
-            max_tent_crp = tent_crp
-            best_cam = cam
+    n_cluster_cams = 2
+    while n_cluster_cams < n_cams:
 
-    best_cam = 3
-    [X, u] = c.get_Xu(best_cam)
+        tent_cams = c.get_green_cameras()
+        if not tent_cams:
+            print("no more tentative cams")
+            break
 
-    # todo: implement p3p with ransac
-    new_inls = []
+        # get tent cam with the most corresp
+        max_tent_crp = 0
+        new_cam = 0
+        for cam in tent_cams:
+            n_tent_crp = c.get_Xucount(cam)
+            if n_tent_crp > max_tent_crp:
+                max_tent_crp = n_tent_crp
+                new_cam = cam
 
-    c.join_camera(best_cam, new_inls)
+        # best_cam = 3
+        print("best_cam is: ", new_cam)
+        [X, u] = c.get_Xu(new_cam)
 
-    nb_cam_list = c.get_cneighbours(best_cam)
-    for nb_cam in nb_cam_list:
-        cam_crp = c.get_m(best_cam, nb_cam)
 
-        # todo: reconstruct 3d points
-        Xs = get_3d_points(features1, features2, corresps, inls, P1, P2)
-        colors = get_3d_colors(features1, features2, corresps, inls, img1, img2)
+        # todo: implement p3p with ransac
+        R, t, new_inls = get_new_cam()
 
-        # todo: for inliers check only in front camera position?
-        inls = np.array([i for i in range(Xs.shape[1])])
-        X_ids = np.array([i + len(X_ids) for i in range(Xs.shape[1])])  # IDs of the reconstructed scene points
+        c.join_camera(new_cam, new_inls)
+        nb_cam_list = c.get_cneighbours(new_cam)
 
-        c.new_x(best_cam, nb_cam, inls, X_ids)
+        for nb_cam in nb_cam_list:
+            cam_crp = c.get_m(new_cam, nb_cam)
 
-        # todo: verify the tentative corresp
+            # todo: reconstruct 3d points
+            Xs = get_3d_points(features1, features2, corresps, inls, P1, P2)
+            colors = get_3d_colors(features1, features2, corresps, inls, img1, img2)
 
+            # todo: for inliers check only in front camera position?
+            inls = np.array([i for i in range(Xs.shape[1])])
+            X_ids = np.array([i + len(X_ids) for i in range(Xs.shape[1])])  # IDs of the reconstructed scene points
+
+            c.new_x(best_cam, nb_cam, inls, X_ids)
+
+            # todo: verify the tentative corresp
+
+
+        n_cluster_cams += 1
 
 
 
