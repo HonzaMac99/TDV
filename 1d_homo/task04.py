@@ -3,10 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib import cbook
-import toolbox as tb
 import math
 import copy
 import sys
+
+sys.path.append('..')
+import tools as tb
 
 
 def get_line_boundaries(plot_line, img):
