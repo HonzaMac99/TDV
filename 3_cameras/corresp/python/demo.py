@@ -22,7 +22,7 @@ c.start( 0, 1, np.array( [0, 2] ) )
 
 c.join_camera( 2, np.array( [0, 1] ) )
 
-c.new_x( 0, 2, np.array( [ 0 ] ) );
+c.new_x( 0, 2, np.array( [ 0 ] ) )
 
 c.verify_x( 0, np.array( [], dtype=int ) )
 
