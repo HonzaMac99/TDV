@@ -606,7 +606,10 @@ class Corresp():
 
                     # TODO this is hack - i_uid(k) can correspond to more pairs cq
                     # but only the first is used and duplicated now
-                    new_Xu = np.unique( new_Xu, axis=0 )
+                    if new_Xu.shape[0] > 0:
+                        new_Xu = np.unique( new_Xu, axis=0 )
+                    else:
+                        print("No elements in new_Xu!!! This was crashing")
                     
                     this.Xu[q] = np.vstack( ( this.Xu[q], new_Xu ) )
                     this.Xu_verified[q] = np.hstack( ( this.Xu_verified[q],

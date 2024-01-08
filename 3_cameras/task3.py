@@ -75,21 +75,41 @@ def crp2inls(cam1, cam2, crp_remaining):
     return inls
 
 
+def get_new_3d_colors(cam1, cam2, crp, sparsity=1):
+    f1 = get_feats(cam1)            # cam1 features
+    f2 = get_feats(cam2)            # cam2 features
+    img1 = get_img(cam1)            # img from cam1
+    img2 = get_img(cam2)            # img from cam2
+    colors = []
+    for i in range(0, len(crp), sparsity):
+        img1_point = f1[crp[i, 0]].reshape(2,)
+        [x, y] = np.round(img1_point).astype(int)
+        [r, g, b] = img1[y, x]
+        color1 = (r/255.0, g/255.0, b/255.0)
+
+        img2_point = f2[crp[i, 1]].reshape(2,)
+        [x, y] = np.round(img2_point).astype(int)
+        [r, g, b] = img2[y, x]
+        color2 = (r/255.0, g/255.0, b/255.0)
+
+        color = ((color1[0] + color2[0])/2,
+                 (color1[1] + color2[1])/2,
+                 (color1[2] + color2[2])/2)
+        colors.append(color)
+    return colors
+
+
 def get_new_3d_points(cam1, cam2, crp, P1, P2):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
     Xs = np.zeros((4, 0))
-    for i in range(0, len(crp), sparsity):
+    for i in range(0, len(crp)):
         u1 = tb.e2p(f1[crp[i, 0]].reshape((2, 1)))
         u2 = tb.e2p(f2[crp[i, 1]].reshape((2, 1)))
         X = tb.Pu2X(P1, P2, u1, u2)
         Xs = np.hstack((Xs, X))
 
     return Xs
-
-def get_3d_colors_c(cam1, cam2, corresp):
-    inls = crp2inls(cam1, cam2, corresp)
-    return get_3d_points(cam1, cam2, inls, P1, P2)
 
 
 # get the projection matrices, camera centres and unit z axis point for a pair of cameras
@@ -298,9 +318,11 @@ if __name__ == '__main__':
 
     # main loop
     while n_cluster_cams < n_cams:
+        # break
 
-        tent_cams, tent_cams_crp_n = c.get_green_cameras()
-        n_tent_crp, n_verif_crp = c.get_Xucount(tent_cams)
+        tent_cams, n_Xu_crp = c.get_green_cameras()
+        n_tent_crp, n_verif_crp = c.get_Xucount(tent_cams)  # scene to image corresp counts
+        # why n_Xu_crp != n_tent_crp??
         if tent_cams.shape[0] == 0:
             print("no more tentative cams")
             break
@@ -308,11 +330,10 @@ if __name__ == '__main__':
         # get tent cam with the most corresp
         new_cam = np.argmax(n_tent_crp)
 
-        # best_cam = 3
         print("best_cam is (from 0): ", new_cam)
-        X, u, _ = c.get_Xu(new_cam)
+        X_crp, u_crp, _ = c.get_Xu(new_cam)
 
-        R, t, new_inls = get_new_cam(new_cam, Xs, X, u, K)
+        R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
 
         P_arr[new_cam] = K @ np.hstack((R, t))
 
@@ -324,14 +345,15 @@ if __name__ == '__main__':
             if P_arr[nb_cam] is None:
                 continue
             cam_crp = c.get_m(new_cam, nb_cam)
+            cam_crp = np.array(cam_crp).T
 
             P1 = P_arr[new_cam]
             P2 = P_arr[nb_cam]
 
             # triangulate 3D points from the known Ps of the camera pair
-            inls = crp2inls(new_cam, nb_cam, cam_crp)
-            new_Xs = get_3d_points(new_cam, nb_cam, inls, P1, P2)
-            new_colors = get_3d_colors(new_cam, nb_cam, inls)
+            # inls = crp2inls(new_cam, nb_cam, cam_crp)
+            new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, P1, P2)
+            new_colors = get_new_3d_colors(new_cam, nb_cam, cam_crp)
 
             # get inliers with pozitive z
             inls = []  # must be indices to corresp between new_cam and nb_cam
@@ -347,16 +369,38 @@ if __name__ == '__main__':
             c.new_x(new_cam, nb_cam, inls, X_ids)
 
             # Todo: verify the tentative corresp emerged in the cluster
-            ilist = c.get_selected_cameras()  # list of all cameras in the cluster
-            for ic in ilist:
-                [X, u, Xu_verified] = c.get_Xu(ic)
-                # Xu_tentative = find(Xu_verified)
+            cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
+            for cl_cam in cam_cluster_list:
+                [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
+                Xu_tentative = np.where(~Xu_verified)[0]
 
                 # Todo: Verify (by reprojection error) scene-to-image correspondences in Xu_tentative. /
                 #       A subset of good points is obtained.
+                cl_feats = get_feats(cl_cam)
+                cl_P = P_arr[cl_cam]
 
-                corr_ok = []
-                c.verify_x(ic, corr_ok)
+                crp_ok = []
+                theta = 3
+                for idx in Xu_tentative:
+                    Xi = Xs[:, X_crp[idx]].reshape(4, 1)
+
+                    ui_orig = cl_feats[u_crp[idx]].reshape(2, 1)
+                    ui_orig = tb.e2p(ui_orig)        # [u, v] --> [u, v, 1]
+
+                    ui_new = cl_P @ Xi
+                    ui_new = tb.e2p(tb.p2e(ui_new))  # normalize to the homogenous
+
+                    assert (K_inv @ cl_P @ Xi)[2] > 0, "corresp not in front of camera!"
+                    e_reprj = math.sqrt(
+                        (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
+                        (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
+
+                    if e_reprj < theta:  # !!assinment: e_reprj**2 < theta**2
+                        crp_ok.append(idx)
+
+                if Xu_verified[crp_ok].any():
+                    print("houston, we have a problem")
+                c.verify_x(cl_cam, crp_ok)
 
             c.finalize_camera()
 
@@ -397,8 +441,8 @@ if __name__ == '__main__':
     sparsity = 50
     for i in range(Xs.shape[1]):
         if i % sparsity == 0:
-            # ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
-            ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color="black")
+            ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
+            # ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color="black")
 
     plt.show()
 
