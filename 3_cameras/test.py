@@ -60,3 +60,5 @@ plt.show()
 # [r, g, b] = img1[y, x]
 # c_arr = (r/255.0, g/255.0, b/255.0)
 # ax.scatter(Cs[0, i], Cs[1, i], Cs[2, i], marker='o', s=20, c=c_arr)  # c='black'
+
+

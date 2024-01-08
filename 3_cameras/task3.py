@@ -7,6 +7,7 @@ import sys
 sys.path.append('..')
 sys.path.append('p5/python')
 sys.path.append('corresp/python')
+sys.path.append('p3p/python')
 sys.path.append('geom_export/python')
 import epipolar as ep
 import tools as tb
@@ -63,6 +64,7 @@ def get_3d_points(cam1, cam2, inls, P1, P2, sparsity=1):
     return Xs
 
 
+# this function gets the ids of the remaining corresps in original corresps and returns it as inlier index array
 def crp2inls(cam1, cam2, crp_remaining):
     crp_orig = get_corresps(cam1, cam2)  # cams corresp. f. indexes
     inls = []
@@ -73,12 +75,19 @@ def crp2inls(cam1, cam2, crp_remaining):
     return inls
 
 
+def get_new_3d_points(cam1, cam2, crp, P1, P2):
+    f1 = get_feats(cam1)            # cam1 features
+    f2 = get_feats(cam2)            # cam2 features
+    Xs = np.zeros((4, 0))
+    for i in range(0, len(crp), sparsity):
+        u1 = tb.e2p(f1[crp[i, 0]].reshape((2, 1)))
+        u2 = tb.e2p(f2[crp[i, 1]].reshape((2, 1)))
+        X = tb.Pu2X(P1, P2, u1, u2)
+        Xs = np.hstack((Xs, X))
+
+    return Xs
+
 def get_3d_colors_c(cam1, cam2, corresp):
-    inls = crp2inls(cam1, cam2, corresp)
-    return get_3d_colors(cam1, cam2, inls)
-
-
-def get_3d_points_c(cam1, cam2, corresp, P1, P2):
     inls = crp2inls(cam1, cam2, corresp)
     return get_3d_points(cam1, cam2, inls, P1, P2)
 
@@ -88,7 +97,7 @@ def get_geometry(K, R, t):
     # camera projections working with uncalibrated points
     P1 = K @ np.eye(3, 4)
     P2 = K @ np.hstack((R, t))
-    Ps = np.hstack((P1, P2))
+    Ps = [P1, P2]  # do not use ndarray here
 
     # camera centers
     C1 = np.zeros((3, 1))
@@ -103,9 +112,21 @@ def get_geometry(K, R, t):
     return Ps, Cs, zs
 
 
+def get_new_geometry(K_inv, P):
+    assert P is not None, "Got P that is None!"
+    R = (K_inv @ P)[:, :3]
+    t = (K_inv @ P)[:, 3]
+
+    new_C = -R.T @ t
+    new_z = new_C + R[2, :].reshape(3, 1)
+    return new_C, new_z
+
+
 def get_corresps(i, j):
     i += 1
     j += 1
+    if i > j:
+        i, j = j, i
     if i < 10 and j < 10:
         f_name = 'm_0{}_0{}.txt'.format(i, j)
     elif i >= 10 and j < 10:
@@ -127,7 +148,7 @@ def get_feats(i):
         f_name = 'u_{}.txt'.format(i)
 
     path = 'scene_1/corresp/{}'.format(f_name)
-    feats = np.genfromtxt(path, dtype='int')
+    feats = np.genfromtxt(path, dtype='float')
     return feats
 
 def get_img(i):
@@ -181,9 +202,9 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
         rand_idx = rng.choice(np.arange(n_crp), size=3, replace=False)
 
         Xs_triple = np.zeros((4, 3))
-        Us_triple = np.zeros((3, 3))
+        Us_triple = np.zeros((2, 3))
         for i, idx in enumerate(rand_idx):
-            Xs_triple[:, i] = Xs[Xs_crp[idx]]
+            Xs_triple[:, i] = Xs[:, Xs_crp[idx]]
             Us_triple[:, i] = feats2[u_crp[idx]]
         Us_triple = K_inv @ tb.e2p(Us_triple)  # the points should be rectified first by K_inv!
 
@@ -191,7 +212,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
         if not Xs_local_arr:
             continue
         for Xs_local in Xs_local_arr:
-            R, t = p3p.XX2Rt_simple(Xs, Xs_local)  # get R, t from glob Xs to the local 3D points
+            R, t = p3p.XX2Rt_simple(Xs_triple, Xs_local)  # get R, t from glob Xs to the local 3D points
 
             # use P with K because the points are unrectified!
             P1 = K @ np.eye(3, 4)
@@ -206,7 +227,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
                 Xi = Xs[:, Xs_crp[i]].reshape(4, 1)
 
-                ui_orig = feats2[u_crp[i]].reashape(2, 1)
+                ui_orig = feats2[u_crp[i]].reshape(2, 1)
                 ui_orig = tb.e2p(ui_orig)        # [u, v] --> [u, v, 1]
                 ui_new = P2 @ Xi
                 ui_new = tb.e2p(tb.p2e(ui_new))  # normalize to the homogenous
@@ -221,7 +242,8 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
                     if e_reprj < theta:  # !!assinment: e_reprj**2 < theta**2
                         support += float(1 - e_reprj**2/theta**2)
-                        inlier_idxs.append(Xs_crp[i])
+                        # remember inlier indexes of Xs_crp to be able to remove the outliers in c.join_camera
+                        inlier_idxs.append(i)
 
             if support > best_support:
                 best_support = support
@@ -248,7 +270,7 @@ if __name__ == '__main__':
     img1, img2 = get_img(cam1), get_img(cam2)
     feats1, feats2 = get_feats(cam1), get_feats(cam2)
     K = np.loadtxt('scene_1/K.txt', dtype='float')
-    # K_inv = np.linalg.inv(K)
+    K_inv = np.linalg.inv(K)
     # F = K_inv.T @ E @ K_inv
 
     n_cams = 12
@@ -269,7 +291,7 @@ if __name__ == '__main__':
     # get initial 3d points and their corresponding colors
     Xs = get_3d_points(cam1, cam2, inls, Ps[0], Ps[1])
     colors = get_3d_colors(cam1, cam2, inls)
-    X_ids = np.arrange(Xs.shape[1])  # IDs of the reconstructed scene points
+    X_ids = np.arange(Xs.shape[1])  # IDs of the reconstructed scene points
 
     c.start(0, 1, inls, X_ids)
     n_cluster_cams = 2
@@ -277,23 +299,18 @@ if __name__ == '__main__':
     # main loop
     while n_cluster_cams < n_cams:
 
-        tent_cams = c.get_green_cameras()
-        if not tent_cams:
+        tent_cams, tent_cams_crp_n = c.get_green_cameras()
+        n_tent_crp, n_verif_crp = c.get_Xucount(tent_cams)
+        if tent_cams.shape[0] == 0:
             print("no more tentative cams")
             break
 
         # get tent cam with the most corresp
-        max_tent_crp = 0
-        new_cam = 0
-        for cam in tent_cams:
-            n_tent_crp = c.get_Xucount(cam)
-            if n_tent_crp > max_tent_crp:
-                max_tent_crp = n_tent_crp
-                new_cam = cam
+        new_cam = np.argmax(n_tent_crp)
 
         # best_cam = 3
-        print("best_cam is: ", new_cam)
-        [X, u] = c.get_Xu(new_cam)
+        print("best_cam is (from 0): ", new_cam)
+        X, u, _ = c.get_Xu(new_cam)
 
         R, t, new_inls = get_new_cam(new_cam, Xs, X, u, K)
 
@@ -308,24 +325,28 @@ if __name__ == '__main__':
                 continue
             cam_crp = c.get_m(new_cam, nb_cam)
 
-            # todo: add camera classes?
             P1 = P_arr[new_cam]
             P2 = P_arr[nb_cam]
 
-            # todo: reconstruct 3d points
-            # we already know the camera pair transformations, so just triangulate the 3D pts
-            new_Xs = get_3d_points_c(new_cam, nb_cam, cam_crp, P1, P2)
-            new_colors = get_3d_colors_c(new_cam, nb_cam, cam_crp)
-            Xs = np.hstack(Xs, new_Xs)    # append new 3D points
-            colors = colors + new_colors  # append new color array
+            # triangulate 3D points from the known Ps of the camera pair
+            inls = crp2inls(new_cam, nb_cam, cam_crp)
+            new_Xs = get_3d_points(new_cam, nb_cam, inls, P1, P2)
+            new_colors = get_3d_colors(new_cam, nb_cam, inls)
 
-            # todo: Check pozitive z for inliers and more?
-            inls = np.arange(new_Xs.shape[1])
-            X_ids = np.arange(new_Xs.shape[1]) + len(X_ids)  # IDs of the reconstructed scene points
+            # get inliers with pozitive z
+            inls = []  # must be indices to corresp between new_cam and nb_cam
+            for i in range(new_Xs.shape[1]):
+                new_X = new_Xs[:, i].reshape(4, 1)
+                if (P1 @ new_X)[2] >= 0 and (P2 @ new_X)[2] >= 0:
+                    Xs = np.hstack((Xs, new_X))     # append new 3D point
+                    colors.append(new_colors[i])    # append new color
+                    inls.append(i)
+
+            X_ids = np.arange(len(inls)) + len(X_ids)  # IDs of the reconstructed scene points
 
             c.new_x(new_cam, nb_cam, inls, X_ids)
 
-            # Todo: verify the tentative corresp
+            # Todo: verify the tentative corresp emerged in the cluster
             ilist = c.get_selected_cameras()  # list of all cameras in the cluster
             for ic in ilist:
                 [X, u, Xu_verified] = c.get_Xu(ic)
@@ -340,6 +361,7 @@ if __name__ == '__main__':
             c.finalize_camera()
 
         n_cluster_cams += 1
+        break
 
 
     # ==============================================================================
@@ -353,20 +375,30 @@ if __name__ == '__main__':
     ax.set_zlim([-2, 2])
     # ax.axis('off')
 
-    # Todo: create global Ps, Cs and zs
+    # get the remaining camera geometries
+    n_cams = 3
+    for i in range(2, n_cams):
+        new_Cs, new_zs = get_new_geometry(K_inv, P_arr[i])
+        Cs = np.hstack((Cs, new_Cs))
+        zs = np.hstack((zs, new_zs))
 
-    # plot the camera centers and the baseline
-    ax.plot(Cs[0, :], Cs[1, :], Cs[2, :], marker='o', c='red')
+    # plot the camera centers and their axes
+    cam_color = 'blue'
     for i in range(Cs.shape[1]):
-        ax.scatter(Cs[0, i], Cs[1, i], Cs[2, i], marker='o', s=20, c='black')
-        ax.text(Cs[0, i], Cs[1, i], Cs[2, i], str(i+1), fontsize=10, c='black')
+        if i < 2:
+            cam_color = 'red'
+        ax.scatter(Cs[0, i], Cs[1, i], Cs[2, i], marker='o', s=20, c=cam_color)
+        ax.text(Cs[0, i], Cs[1, i], Cs[2, i], str(i+1), fontsize=10, c=cam_color)
         ax.plot([Cs[0, i], zs[0, i]],  # plot the camera z axis
                 [Cs[1, i], zs[1, i]],
-                [Cs[2, i], zs[2, i]], c='black')
+                [Cs[2, i], zs[2, i]], c=cam_color)
 
     # plot the 3D points with colors
+    sparsity = 50
     for i in range(Xs.shape[1]):
-        ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
+        if i % sparsity == 0:
+            # ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
+            ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color="black")
 
     plt.show()
 
