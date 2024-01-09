@@ -137,7 +137,7 @@ def get_new_geometry(K_inv, P):
     R = (K_inv @ P)[:, :3]
     t = (K_inv @ P)[:, 3]
 
-    new_C = -R.T @ t
+    new_C = (-R.T @ t).reshape(3, 1)
     new_z = new_C + R[2, :].reshape(3, 1)
     return new_C, new_z
 
@@ -194,9 +194,15 @@ def init_c(n_cameras):
 
 def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     ''' get new camera parameters such as R, t and inlier idxs
+        in: cam_id  ... [int] id of the camera
         in: Xs      ... [4xn] homogenous array of all 3D points
-        in: Xs_crp  ... array with idxs for Xs, obtained from c.get_Xu(cam_id)
-        in: u_crp   ... array with idxs for features, obtained from c.get_Xu(cam_id)
+        in: Xs_crp  ... [int array] of idxs for 3D points Xs, obtained from c.get_Xu(cam_id)
+        in: u_crp   ... [int array] of idxs for features u, obtained from c.get_Xu(cam_id)
+        in: K       ... [3x3 matrix] of calibration
+
+        out: R      ... [3x3 matrix] of cam rotation to global Xs
+        out: t      ... [3x1 vector] of cam translation
+        out: inliers ... [int array] of indexes of Xs_crp --> inliers in Xs
     '''
     print("Estimating new cam R, t")
 
@@ -235,7 +241,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
             R, t = p3p.XX2Rt_simple(Xs_triple, Xs_local)  # get R, t from glob Xs to the local 3D points
 
             # use P with K because the points are unrectified!
-            P1 = K @ np.eye(3, 4)
+            # P1 = K @ np.eye(3, 4)
             P2 = K @ np.hstack((R, t))
 
             support = 0
@@ -262,7 +268,9 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
                     if e_reprj < theta:  # !!assinment: e_reprj**2 < theta**2
                         support += float(1 - e_reprj**2/theta**2)
-                        # remember inlier indexes of Xs_crp to be able to remove the outliers in c.join_camera
+
+                        # remember idxs (not elements) of Xs_crp set to be able
+                        # to select and keep the inls in c.join_camera
                         inlier_idxs.append(i)
 
             if support > best_support:
@@ -273,7 +281,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
             k += 1
-            epsilon = 1 - (support/n_crp)
+            epsilon = 1 - (support+1)/(n_crp+1)
             k_max = math.log(1 - probability) / math.log(1 - (1 - epsilon)**3)
 
     print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
@@ -294,7 +302,7 @@ if __name__ == '__main__':
     # F = K_inv.T @ E @ K_inv
 
     n_cams = 12
-    P_arr = [None for i in range(n_cams)]
+    P_arr = [None] * n_cams
     c = init_c(n_cams)
     corresps = np.array(c.get_m(0, 1)).T
 
@@ -320,32 +328,34 @@ if __name__ == '__main__':
     while n_cluster_cams < n_cams:
         # break
 
+        # why always n_Xu_crp <= n_tent_crp??
         tent_cams, n_Xu_crp = c.get_green_cameras()
         n_tent_crp, n_verif_crp = c.get_Xucount(tent_cams)  # scene to image corresp counts
-        # why n_Xu_crp != n_tent_crp??
+
         if tent_cams.shape[0] == 0:
             print("no more tentative cams")
             break
 
-        # get tent cam with the most corresp
+        # get new cam with the most tentative corresp
         new_cam = np.argmax(n_tent_crp)
-
         print("best_cam is (from 0): ", new_cam)
+
+        # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
         X_crp, u_crp, _ = c.get_Xu(new_cam)
-
         R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
-
         P_arr[new_cam] = K @ np.hstack((R, t))
 
+        # add the new camera to the cluster, OK
         c.join_camera(new_cam, new_inls)
+
+        # get ids of cameras that still have corresp m[][] to the new_cam
         nb_cam_list = c.get_cneighbours(new_cam)
 
         for nb_cam in nb_cam_list:
             # we must know the transformations
             if P_arr[nb_cam] is None:
                 continue
-            cam_crp = c.get_m(new_cam, nb_cam)
-            cam_crp = np.array(cam_crp).T
+            cam_crp = np.array(c.get_m(new_cam, nb_cam)).T
 
             P1 = P_arr[new_cam]
             P2 = P_arr[nb_cam]
@@ -357,56 +367,56 @@ if __name__ == '__main__':
 
             # get inliers with pozitive z
             inls = []  # must be indices to corresp between new_cam and nb_cam
-            for i in range(new_Xs.shape[1]):
+            for i in range(new_Xs.shape[1]):   # or cam_crp.shape[0], n of corresps
                 new_X = new_Xs[:, i].reshape(4, 1)
                 if (P1 @ new_X)[2] >= 0 and (P2 @ new_X)[2] >= 0:
                     Xs = np.hstack((Xs, new_X))     # append new 3D point
                     colors.append(new_colors[i])    # append new color
-                    inls.append(i)
+                    inls.append(i)                  # indexes to the cam_crp, OK
 
             X_ids = np.arange(len(inls)) + len(X_ids)  # IDs of the reconstructed scene points
 
+            # store the new X-u corresps as selected for both cameras, delete the remaining u-u corresps, OK
             c.new_x(new_cam, nb_cam, inls, X_ids)
 
-            # Todo: verify the tentative corresp emerged in the cluster
-            cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
-            for cl_cam in cam_cluster_list:
-                [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
-                Xu_tentative = np.where(~Xu_verified)[0]
+        # verify the tentative corresp emerged in the cluster --> the cluster should contain only verified X-u
+        cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
+        for cl_cam in cam_cluster_list:
+            [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
+            Xu_tentative = np.where(~Xu_verified)[0]
 
-                # Todo: Verify (by reprojection error) scene-to-image correspondences in Xu_tentative. /
-                #       A subset of good points is obtained.
-                cl_feats = get_feats(cl_cam)
-                cl_P = P_arr[cl_cam]
+            # verify by reprojection error tentative X-u corresps
+            cl_feats = get_feats(cl_cam)
+            cl_P = P_arr[cl_cam]
 
-                crp_ok = []
-                theta = 3
-                for idx in Xu_tentative:
-                    Xi = Xs[:, X_crp[idx]].reshape(4, 1)
+            # loop through indexes of remaining unverified X-u correspondences
+            crp_ok = []
+            theta = 3
+            for idx in Xu_tentative:
+                Xi = Xs[:, X_crp[idx]].reshape(4, 1)
 
-                    ui_orig = cl_feats[u_crp[idx]].reshape(2, 1)
-                    ui_orig = tb.e2p(ui_orig)        # [u, v] --> [u, v, 1]
+                ui_orig = cl_feats[u_crp[idx]].reshape(2, 1)
+                ui_orig = tb.e2p(ui_orig)        # [u, v] --> [u, v, 1]
 
-                    ui_new = cl_P @ Xi
-                    ui_new = tb.e2p(tb.p2e(ui_new))  # normalize to the homogenous
+                ui_new = cl_P @ Xi
+                ui_new = tb.e2p(tb.p2e(ui_new))  # normalize to the homogenous
 
-                    assert (K_inv @ cl_P @ Xi)[2] > 0, "corresp not in front of camera!"
+                if (K_inv @ cl_P @ Xi)[2] > 0:
                     e_reprj = math.sqrt(
                         (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
                         (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
 
                     if e_reprj < theta:  # !!assinment: e_reprj**2 < theta**2
+                        # save the indexes to X-u correspondences, OK
                         crp_ok.append(idx)
 
-                if Xu_verified[crp_ok].any():
-                    print("houston, we have a problem")
-                c.verify_x(cl_cam, crp_ok)
+            # remove the outliers from remaining tentative X-u corresps, OK
+            c.verify_x(cl_cam, crp_ok)
 
-            c.finalize_camera()
-
+        c.finalize_camera()
+        print("camera finalized")
         n_cluster_cams += 1
         break
-
 
     # ==============================================================================
 
@@ -420,19 +430,23 @@ if __name__ == '__main__':
     # ax.axis('off')
 
     # get the remaining camera geometries
-    n_cams = 3
-    for i in range(2, n_cams):
-        new_Cs, new_zs = get_new_geometry(K_inv, P_arr[i])
-        Cs = np.hstack((Cs, new_Cs))
-        zs = np.hstack((zs, new_zs))
+    cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
+    for i in range(2, len(cam_cluster_list)):
+    # for idx in range(2, n_cams):
+        idx = cam_cluster_list[i]
+        new_C, new_z = get_new_geometry(K_inv, P_arr[idx])
+        Cs = np.hstack((Cs, new_C))
+        zs = np.hstack((zs, new_z))
 
     # plot the camera centers and their axes
-    cam_color = 'blue'
     for i in range(Cs.shape[1]):
+        idx = cam_cluster_list[i]
         if i < 2:
             cam_color = 'red'
+        else:
+            cam_color = 'blue'
         ax.scatter(Cs[0, i], Cs[1, i], Cs[2, i], marker='o', s=20, c=cam_color)
-        ax.text(Cs[0, i], Cs[1, i], Cs[2, i], str(i+1), fontsize=10, c=cam_color)
+        ax.text(Cs[0, i], Cs[1, i], Cs[2, i], str(idx+1), fontsize=10, c=cam_color)
         ax.plot([Cs[0, i], zs[0, i]],  # plot the camera z axis
                 [Cs[1, i], zs[1, i]],
                 [Cs[2, i], zs[2, i]], c=cam_color)

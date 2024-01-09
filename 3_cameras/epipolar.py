@@ -74,7 +74,7 @@ def ransac_E(features1, features2, corresp, K):
                 print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
             k += 1
-            w = (support + 1) / n_crp
+            w = (support + 1) / (n_crp + 1)
             k_max = math.log(1 - probability) / math.log(1 - w ** 2)
 
     print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
