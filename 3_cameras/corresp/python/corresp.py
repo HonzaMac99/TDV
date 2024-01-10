@@ -608,7 +608,7 @@ class Corresp():
                     # but only the first is used and duplicated now
                     if new_Xu.shape[0] > 0:
                         new_Xu = np.unique( new_Xu, axis=0 )
-                    else:
+                    elif this.verbose > 0:
                         print("No elements in new_Xu!!! This was crashing")
                     
                     this.Xu[q] = np.vstack( ( this.Xu[q], new_Xu ) )
