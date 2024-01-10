@@ -224,7 +224,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     k_max = 100
     theta = 3  # pixels
     probability = 0.40  # 0.95
-    while k <= k_max:
+    while k <= k_max and k <= 100:
         rand_idx = rng.choice(np.arange(n_crp), size=3, replace=False)
 
         Xs_triple = np.zeros((4, 3))
@@ -283,6 +283,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
             k += 1
             epsilon = 1 - (support+1)/(n_crp+1)
             k_max = math.log(1 - probability) / math.log(1 - (1 - epsilon)**3)
+            k_max = min(k_max, 100)
 
     print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
 
@@ -337,7 +338,7 @@ if __name__ == '__main__':
             break
 
         # get new cam with the most tentative corresp
-        new_cam = np.argmax(n_tent_crp)
+        new_cam = tent_cams[np.argmax(n_tent_crp)]
         print("best_cam is (from 0): ", new_cam)
 
         # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
@@ -416,14 +417,14 @@ if __name__ == '__main__':
         c.finalize_camera()
         print("camera finalized")
         n_cluster_cams += 1
-        break
+        # break
 
     # ==============================================================================
 
     # plot the centers of cameras
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.view_init(elev=-125, azim=100, roll=180)
+    # ax.view_init(elev=-125, azim=100, roll=180)
     ax.set_xlim([-1.5, 2.5])
     ax.set_ylim([-3, 1])
     ax.set_zlim([-2, 2])
@@ -452,7 +453,7 @@ if __name__ == '__main__':
                 [Cs[2, i], zs[2, i]], c=cam_color)
 
     # plot the 3D points with colors
-    sparsity = 50
+    sparsity = 20
     for i in range(Xs.shape[1]):
         if i % sparsity == 0:
             ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
@@ -472,6 +473,7 @@ if __name__ == '__main__':
 
     # g = ge.GePly('out.ply')
     # colors = np.array(colors).T
+    # Xs = tb.e2p(Xs)
     # # g.points(Xs, colors) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
     # g.points(Xs) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
     # g.close()

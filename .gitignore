@@ -5,6 +5,7 @@
 
 .idea/
 __pycache__/
+__pycache__/tools.cpython-38.pyc
 MeshLab2022.02-linux.AppImage
 
 #�koly directory
