@@ -64,17 +64,6 @@ def get_3d_points(cam1, cam2, inls, P1, P2, sparsity=1):
     return Xs
 
 
-# this function gets the ids of the remaining corresps in original corresps and returns it as inlier index array
-def crp2inls(cam1, cam2, crp_remaining):
-    crp_orig = get_corresps(cam1, cam2)  # cams corresp. f. indexes
-    inls = []
-    for i, crp in enumerate(crp_orig):
-        # Todo: check if crp_remaining is ordered and then improve performance
-        if crp in crp_remaining:
-            inls.append(i)
-    return inls
-
-
 def get_new_3d_colors(cam1, cam2, crp, sparsity=1):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
@@ -160,6 +149,7 @@ def get_corresps(i, j):
     corresps = np.genfromtxt(path, dtype='int')
     return corresps
 
+
 def get_feats(i):
     i += 1
     if i < 10:
@@ -192,6 +182,8 @@ def init_c(n_cameras, verbose):
     return c
 
 
+# plot the comparison between the original features and the
+# projections of corresponding 3D points (Xs) by the best estimated R and t
 def plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp):
     fig, ax = plt.subplots(1, 1)
     ax.invert_yaxis()
@@ -212,13 +204,30 @@ def plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_c
     crp_proj_in = crp_proj[:, best_inlier_idxs]
     crp_proj_out = crp_proj[:, best_outlier_idxs]
 
-    ax.scatter(crp_feats_in[0, :], crp_feats_in[1, :], marker='o', color='red', s=20)
     ax.scatter(crp_feats_out[0, :], crp_feats_out[1, :], marker='o', color='gray', s=20)
-    ax.scatter(crp_proj_in[0, :], crp_proj_in[1, :], marker='x', color='blue', s=20)
     ax.scatter(crp_proj_out[0, :], crp_proj_out[1, :], marker='x', color='gray', s=20)
+
+    ax.scatter(crp_feats_in[0, :], crp_feats_in[1, :], marker='o', color='red', s=20)
+    ax.scatter(crp_proj_in[0, :], crp_proj_in[1, :], marker='x', color='blue', s=20)
 
     plt.show()
 
+
+def plot_error_hist(err_array, treshold, n_inliers):
+    max_val = 100  # 3000
+    n_bins = 100
+    hist_range = (0, max_val)
+    err_array.clip(min=None, max=max_val)
+    plt.hist(err_array, bins=n_bins, range=hist_range)
+    plt.axvline(x=treshold, color='red', linestyle='--', label='treshold')
+
+    plt.title('Repr. error histogram: ' + str(n_inliers) + ' inliers')
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.grid(True)
+
+    plt.show()
+    
 
 def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     ''' get new camera parameters such as R, t and inlier idxs
@@ -240,6 +249,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     best_R = np.zeros((3, 3))
     best_t = np.zeros((3, 1))
     best_inlier_idxs = []
+    best_errors = np.zeros(len(Xs_crp))
 
     K_inv = np.linalg.inv(K)
 
@@ -250,17 +260,23 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     k = 0
     k_max = 100
     theta = 3  # pixels
-    probability = 0.60  # 0.95
-    while k <= k_max:
+    probability = 0.99
+    k_max_reached = False
+    while not k_max_reached:
         rand_idx = rng.choice(np.arange(n_crp), size=3, replace=False)
 
         assert len(Xs_crp) >= 3, "Not enough crp to estimate R, t!"
 
         Xs_triple = Xs[:, Xs_crp[rand_idx]]    # [4x3] - 3 random 3D scene points from Xs that are Xs_crp
         Us_triple = feats[u_crp[rand_idx]].T   # [2x3] - 3 corresponding img points from features (u_crp)
-        Us_triple = K_inv @ tb.e2p(Us_triple)  # the points should be rectified first by K_inv!
 
-        Xs_local_arr = p3p.p3p_grunert(Xs_triple, Us_triple)  # compute local coords of the 3D points
+        Us_triple = K_inv @ tb.e2p(Us_triple)  # the points should be rectified first by K_inv for the p3p!
+
+        if not Xs_triple[:3, :].any():
+            print("The triple is degenerate - points are zeros")
+            continue
+
+        Xs_local_arr = p3p.p3p_grunert(Xs_triple, Us_triple)  # compute local coords of the Xs_triple
         if not Xs_local_arr:
             continue
         for Xs_local in Xs_local_arr:
@@ -272,6 +288,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
             support = 0
             inlier_idxs = []
+            errors = np.zeros((n_crp))
             for i in range(n_crp):
                 # we have corresponding features in the new:
                 # we want to project the corresponding global 3D points to compare them
@@ -282,62 +299,84 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 ui_orig = tb.e2p(feats[u_crp[i]].reshape(2, 1))
                 ui_new  = tb.e2p(tb.p2e(P2 @ Xi))
 
+                # note: Xi is already in front of the P1
+                assert (K_inv @ np.eye(3, 4) @ Xi)[2] > 0, "Point from the global pointcloud should not have z negative"
+
+                # note: when support is < 3, one or more of the selected 3D points project behind the camera P2
+
+                # Check if computing with K_inv makes a difference
+                assert ((K_inv @ P2 @ Xi)[2] >  0 and (P2 @ Xi)[2] >  0) or \
+                       ((K_inv @ P2 @ Xi)[2] <= 0 and (P2 @ Xi)[2] <= 0), "Check: the conditions give different results"
+
                 # compute the sampson error only for points in front of the camera
-                if (K_inv @ P2 @ Xi)[2] > 0:  # !!assignment: (K_inv @ P2 @ Xi)[2] > 0:
-                    # note1: we check just P2, because the 3D points are already in front of the P1
-                    # note2: support can be < 3, when one or more of the selected 3D points project behind the camera
+                if (K_inv @ P2 @ Xi)[2] > 0:
 
                     e_reprj = math.sqrt(
                         (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
                         (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
 
-                    if e_reprj**2 < theta**2:  # !!assinment: e_reprj**2 < theta**2
+                    errors[i] = e_reprj
+
+                    if e_reprj**2 <= theta**2:
                         support += float(1 - e_reprj**2/theta**2)
 
-                        # remember idxs (not elements) of Xs_crp set to be able
-                        # to select and keep the inls in c.join_camera
+                        # note: c.join_camera works with indexes (i) of Xs_crp and not its elements to keep the inliers
                         inlier_idxs.append(i)
 
+            k += 1
+            w = (support + 1) / (n_crp + 1)
+            k_max = math.log(1 - probability) / math.log(1 - w ** 3)
+
+            # store the best results and display stats
             if support > best_support:
                 best_support = support
                 best_R = R
                 best_t = t
                 best_inlier_idxs = inlier_idxs
+                best_errors = errors
                 print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
-            k += 1
-            epsilon = 1 - (support+1)/(n_crp+1)
-            k_max = math.log(1 - probability) / math.log(1 - (1 - epsilon)**3)
-            # k_max = min(k_max, 100)
+            if k >= k_max:
+                k_max_reached = True
+                break
 
-    print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
+        iter_treshold = 200
+        if iter_treshold - 50 < k < iter_treshold:
+            print("Warning: too much iterations:", k)
+        elif k >= iter_treshold:
+            print("TIMEOUT on " + str(k) + "-th iteration!! -------------------------")
+            break
 
-    # print(inlier_idxs)
     print("Result R\n", best_R)
     print("Result t\n", best_t)
 
-    # plot the results of P
+    # plot the results of P transformation
     plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp)
-    # make a histogram of the reprj error distribution???
+
+    # display a histogram of the reprj. error distribution
+    plot_error_hist(best_errors, theta, len(best_inlier_idxs))
 
     return best_R, best_t, best_inlier_idxs
 
 
 if __name__ == '__main__':
+
     cam1, cam2 = 0, 1
+    # cam1, cam2 = 5, 6
     img1, img2 = get_img(cam1), get_img(cam2)
     feats1, feats2 = get_feats(cam1), get_feats(cam2)
     K = np.loadtxt('scene_1/K.txt', dtype='float')
     K_inv = np.linalg.inv(K)
-    # F = K_inv.T @ E @ K_inv
 
     n_cams = 12
     P_arr = [None] * n_cams
-    c = init_c(n_cams, 0)
-    corresps = np.array(c.get_m(0, 1)).T
+    corr_verbose = 0  # 1
+    c = init_c(n_cams, corr_verbose)
+    corresps = np.array(c.get_m(cam1, cam2)).T
 
-    # perform the actual E estimation
+    # perform the E estimation of initial camera pair, OK
     E, R, t, inls = ep.ransac_E(feats1, feats2, corresps, K)
+    F = K_inv.T @ E @ K_inv
 
     # ep.plot_inliers(img1, feats1, feats2, corresps, inls)
     # ep.plot_e_lines(img1, img2, feats1, feats2, corresps, inls, F)
@@ -351,11 +390,14 @@ if __name__ == '__main__':
     colors = get_3d_colors(cam1, cam2, inls)
     X_ids = np.arange(Xs.shape[1])  # IDs of the reconstructed scene points
 
-    c.start(0, 1, inls, X_ids)
+    c.start(cam1, cam2, inls, X_ids)
     n_cluster_cams = 2
+    n_cams = 5  # fewer cameras for testing
 
-    # main loop
-    # n_cams = 5
+    # ==============================================================================
+    # =                               Main loop                                    =
+    # ==============================================================================
+
     while n_cluster_cams < n_cams:
 
         # why always n_Xu_crp <= n_tent_crp??
@@ -375,31 +417,39 @@ if __name__ == '__main__':
         R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
         P_arr[new_cam] = K @ np.hstack((R, t))
 
+        cam_crp_prev = np.array(c.get_m(new_cam, cam1)).T
+
         # add the new camera to the cluster, OK
         c.join_camera(new_cam, new_inls)
+
+        # get the img-img crp and 3D-img crp after the call of camera join for the asserts
+        X_crp_after, u_crp_after, _ = c.get_Xu(new_cam)
+        cam_crp_after = np.array(c.get_m(new_cam, cam1)).T
+
+        assert np.array_equal(u_crp_after, u_crp[new_inls]), "New image points do not match the inliers!"
+        assert np.array_equal(X_crp_after, X_crp[new_inls]), "New 3D points do not match the inliers!"
+        # check also the img-img correspondences?
 
         # get ids of cameras that still have corresp m[][] to the new_cam
         nb_cam_list = c.get_cneighbours(new_cam)
 
         for nb_cam in nb_cam_list:
-            # we must know the transformations
-            if P_arr[nb_cam] is None:
-                continue
+            assert P_arr[nb_cam] is not None, "We must know the transformations of neighbors!"
+
             cam_crp = np.array(c.get_m(new_cam, nb_cam)).T
 
             P1 = P_arr[new_cam]
             P2 = P_arr[nb_cam]
 
             # triangulate 3D points from the known Ps of the camera pair
-            # inls = crp2inls(new_cam, nb_cam, cam_crp)
             new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, P1, P2)
             new_colors = get_new_3d_colors(new_cam, nb_cam, cam_crp)
 
             # get inliers with pozitive z
             inls = []  # must be indices to corresp between new_cam and nb_cam
-            for i in range(new_Xs.shape[1]):   # or cam_crp.shape[0], n of corresps
+            for i in range(new_Xs.shape[1]):   # n of corresps, cam_crp.shape[0] could also be used
                 new_X = new_Xs[:, i].reshape(4, 1)
-                if (P1 @ new_X)[2] >= 0 and (P2 @ new_X)[2] >= 0:
+                if (P1 @ new_X)[2] > 0 and (P2 @ new_X)[2] > 0:
                     Xs = np.hstack((Xs, new_X))     # append new 3D point
                     colors.append(new_colors[i])    # append new color
                     inls.append(i)                  # indexes to the cam_crp, OK
@@ -448,6 +498,8 @@ if __name__ == '__main__':
         n_cluster_cams += 1
 
     # ==============================================================================
+    # =                                Plotting                                    =
+    # ==============================================================================
 
     # plot the centers of cameras
     fig = plt.figure()
@@ -488,15 +540,6 @@ if __name__ == '__main__':
             # ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color="black")
 
     plt.show()
-
-
-
-
-
-
-
-
-
 
 
     # g = ge.GePly('out.ply')

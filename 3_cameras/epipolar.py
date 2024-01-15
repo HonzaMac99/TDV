@@ -25,8 +25,9 @@ def ransac_E(features1, features2, corresp, K):
     k = 0
     k_max = 100
     theta = 3  # pixels
-    probability = 0.40  # 0.95
-    while k <= k_max:
+    probability = 0.9995
+    k_max_reached = False
+    while not k_max_reached:
         random_corresp = rng.choice(corresp, 5, replace=False)
         points1 = np.zeros((2, 5))
         points2 = np.zeros((2, 5))
@@ -59,11 +60,15 @@ def ransac_E(features1, features2, corresp, K):
                 X = tb.Pu2X(P1, P2, u1, u2)
 
                 # compute the sampson error only for points in front of the camera
-                if (P1 @ X)[2] >= 0 and (P2 @ X)[2] >= 0:
+                if (P1 @ X)[2] > 0 and (P2 @ X)[2] > 0:
                     e_sampson = tb.err_F_sampson(F, u1, u2)
                     if e_sampson < theta:
                         support += float(1 - e_sampson**2/theta**2)
                         inlier_idxs.append(i)
+
+            k += 1
+            w = (support + 1) / (n_crp + 1)
+            k_max = math.log(1 - probability) / math.log(1 - w ** 2)
 
             if support > best_support:
                 best_support = support
@@ -73,13 +78,10 @@ def ransac_E(features1, features2, corresp, K):
                 best_inlier_idxs = inlier_idxs
                 print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
-            k += 1
-            w = (support + 1) / (n_crp + 1)
-            k_max = math.log(1 - probability) / math.log(1 - w ** 2)
+            if k >= k_max:
+                k_max_reached = True
+                break
 
-    print("[ k:", k-1, "/", k_max, "] [ support:", best_support, "/", n_crp, "]\n")
-
-    # print(inlier_idxs)
     print("Result E\n", best_E)
     print("Result R\n", best_R)
     print("Result t\n", best_t)
