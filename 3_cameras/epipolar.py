@@ -23,20 +23,16 @@ def ransac_E(features1, features2, corresp, K):
     rng = np.random.default_rng()
     n_crp = corresp.shape[0]
     k = 0
-    k_max = 100
+    k_max = np.inf
     theta = 3  # pixels
-    probability = 0.9995
+    probability = 0.9999
     k_max_reached = False
     while not k_max_reached:
         random_corresp = rng.choice(corresp, 5, replace=False)
-        points1 = np.zeros((2, 5))
-        points2 = np.zeros((2, 5))
-        for i in range(5):
-            points1[:, i] = features1[random_corresp[i, 0]]
-            points2[:, i] = features2[random_corresp[i, 1]]
+
         # the points should be rectified first!
-        points1_hom = K_inv @ tb.e2p(points1)
-        points2_hom = K_inv @ tb.e2p(points2)
+        points1_hom = K_inv @ tb.e2p(features1[random_corresp[:, 0]].T)
+        points2_hom = K_inv @ tb.e2p(features2[random_corresp[:, 1]].T)
 
         Es = p5.p5gb(points1_hom, points2_hom)
 
@@ -52,23 +48,23 @@ def ransac_E(features1, features2, corresp, K):
             P1 = K @ np.eye(3, 4)
             P2 = K @ np.hstack((R, t))
 
+            us1 = tb.e2p(features1[corresp[:, 0]].T)
+            us2 = tb.e2p(features2[corresp[:, 1]].T)
+            Xs = tb.Pu2X(P1, P2, us1, us2)
+
             support = 0
             inlier_idxs = []
             for i in range(n_crp):
-                u1 = tb.e2p(features1[corresp[i, 0]].reshape((2, 1)))
-                u2 = tb.e2p(features2[corresp[i, 1]].reshape((2, 1)))
-                X = tb.Pu2X(P1, P2, u1, u2)
+                u1 = us1[:, i].reshape(3, 1)
+                u2 = us2[:, i].reshape(3, 1)
+                Xi = Xs[:, i].reshape(4, 1)
 
                 # compute the sampson error only for points in front of the camera
-                if (P1 @ X)[2] > 0 and (P2 @ X)[2] > 0:
+                if (P1 @ Xi)[2] > 0 and (P2 @ Xi)[2] > 0:
                     e_sampson = tb.err_F_sampson(F, u1, u2)
                     if e_sampson < theta:
                         support += float(1 - e_sampson**2/theta**2)
                         inlier_idxs.append(i)
-
-            k += 1
-            w = (support + 1) / (n_crp + 1)
-            k_max = math.log(1 - probability) / math.log(1 - w ** 2)
 
             if support > best_support:
                 best_support = support
@@ -76,8 +72,13 @@ def ransac_E(features1, features2, corresp, K):
                 best_R = R
                 best_t = t
                 best_inlier_idxs = inlier_idxs
-                print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
+                # update the k_max
+                w = (support + 1) / (n_crp + 1)
+                k_max = math.log(1 - probability) / math.log(1 - w ** 2)
+                print("[ k:", k+1, "/", k_max, "] [ support:", support, "/", n_crp, "]")
+
+            k += 1
             if k >= k_max:
                 k_max_reached = True
                 break

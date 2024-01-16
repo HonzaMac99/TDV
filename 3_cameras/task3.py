@@ -258,7 +258,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     assert n_crp >= 3, "Number of corresp is less than 3!"
 
     k = 0
-    k_max = 100
+    k_max = np.inf
     theta = 3  # pixels
     probability = 0.99
     k_max_reached = False
@@ -286,30 +286,34 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
             # P1 = K @ np.eye(3, 4)
             P2 = K @ np.hstack((R, t))
 
+            # We want to project 3D points to camera with P2 to compute the distance error between
+            # projection and the original image correspondence to X
+            X = Xs[:, Xs_crp]
+            u_orig = tb.e2p(feats[u_crp].T)
+            u_new  = tb.e2p(tb.p2e(P2 @ X))
+
+            # precompute the transformations here for faster checks
+            P2_X = P2 @ X
+
             support = 0
             inlier_idxs = []
             errors = np.zeros((n_crp))
             for i in range(n_crp):
-                # we have corresponding features in the new:
-                # we want to project the corresponding global 3D points to compare them
-                # compute the distance error from it
-
-                Xi = Xs[:, Xs_crp[i]].reshape(4, 1)
-
-                ui_orig = tb.e2p(feats[u_crp[i]].reshape(2, 1))
-                ui_new  = tb.e2p(tb.p2e(P2 @ Xi))
+                # Xi = X[:, i].reshape(4, 1)
+                ui_orig = u_orig[:, i].reshape(3, 1)
+                ui_new  = u_new[:, i].reshape(3, 1)
 
                 # note: Xi is already in front of the P1
-                assert (K_inv @ np.eye(3, 4) @ Xi)[2] > 0, "Point from the global pointcloud should not have z negative"
+                # assert (K_inv @ np.eye(3, 4) @ Xi)[2] > 0, "Point from the global pointcloud should not have z negative"
 
                 # note: when support is < 3, one or more of the selected 3D points project behind the camera P2
 
-                # Check if computing with K_inv makes a difference
-                assert ((K_inv @ P2 @ Xi)[2] >  0 and (P2 @ Xi)[2] >  0) or \
-                       ((K_inv @ P2 @ Xi)[2] <= 0 and (P2 @ Xi)[2] <= 0), "Check: the conditions give different results"
+                # Check if computing with K_inv makes a difference --> no difference experienced so far
+                # assert ((K_inv @ P2 @ Xi)[2] >  0 and (P2 @ Xi)[2] >  0) or \
+                #        ((K_inv @ P2 @ Xi)[2] <= 0 and (P2 @ Xi)[2] <= 0), "Check: the conditions give different results"
 
                 # compute the sampson error only for points in front of the camera
-                if (K_inv @ P2 @ Xi)[2] > 0:
+                if P2_X[2, i] > 0:
 
                     e_reprj = math.sqrt(
                         (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
@@ -323,10 +327,6 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                         # note: c.join_camera works with indexes (i) of Xs_crp and not its elements to keep the inliers
                         inlier_idxs.append(i)
 
-            k += 1
-            w = (support + 1) / (n_crp + 1)
-            k_max = math.log(1 - probability) / math.log(1 - w ** 3)
-
             # store the best results and display stats
             if support > best_support:
                 best_support = support
@@ -334,13 +334,18 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 best_t = t
                 best_inlier_idxs = inlier_idxs
                 best_errors = errors
-                print("[ k:", k, "/", k_max, "] [ support:", support, "/", n_crp, "]")
 
+                # update the k_max
+                w = (support + 1) / (n_crp + 1)
+                k_max = math.log(1 - probability) / math.log(1 - w ** 3)
+                print("[ k:", k+1, "/", k_max, "] [ support:", support, "/", n_crp, "]")
+
+            k += 1
             if k >= k_max:
                 k_max_reached = True
                 break
 
-        iter_treshold = 200
+        iter_treshold = 1000
         if iter_treshold - 50 < k < iter_treshold:
             print("Warning: too much iterations:", k)
         elif k >= iter_treshold:
@@ -392,7 +397,7 @@ if __name__ == '__main__':
 
     c.start(cam1, cam2, inls, X_ids)
     n_cluster_cams = 2
-    n_cams = 5  # fewer cameras for testing
+    # n_cams = 7  # fewer cameras for testing
 
     # ==============================================================================
     # =                               Main loop                                    =
@@ -432,9 +437,10 @@ if __name__ == '__main__':
 
         # get ids of cameras that still have corresp m[][] to the new_cam
         nb_cam_list = c.get_cneighbours(new_cam)
-
         for nb_cam in nb_cam_list:
-            assert P_arr[nb_cam] is not None, "We must know the transformations of neighbors!"
+            print("Reconstructing from", new_cam, "-->", nb_cam, "img-img correspondences")
+
+            assert P_arr[nb_cam] is not None, "We should know the transformations of neighbors!"
 
             cam_crp = np.array(c.get_m(new_cam, nb_cam)).T
 
@@ -445,11 +451,15 @@ if __name__ == '__main__':
             new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, P1, P2)
             new_colors = get_new_3d_colors(new_cam, nb_cam, cam_crp)
 
+            # precompute the transformations here for faster checks
+            P1_new_X = P1 @ new_Xs
+            P2_new_X = P2 @ new_Xs
+
             # get inliers with pozitive z
             inls = []  # must be indices to corresp between new_cam and nb_cam
             for i in range(new_Xs.shape[1]):   # n of corresps, cam_crp.shape[0] could also be used
-                new_X = new_Xs[:, i].reshape(4, 1)
-                if (P1 @ new_X)[2] > 0 and (P2 @ new_X)[2] > 0:
+                if P1_new_X[2, i] > 0 and P2_new_X[2, i] > 0:
+                    new_X = new_Xs[:, i].reshape(4, 1)
                     Xs = np.hstack((Xs, new_X))     # append new 3D point
                     colors.append(new_colors[i])    # append new color
                     inls.append(i)                  # indexes to the cam_crp, OK
@@ -462,39 +472,42 @@ if __name__ == '__main__':
         # verify the tentative corresp emerged in the cluster --> the cluster should contain only verified X-u
         cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
         for cl_cam in cam_cluster_list:
+            print("Verifying", new_cam, "--", cl_cam, "tentative Xu correspondences")
             [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
             Xu_tentative = np.where(~Xu_verified)[0]
 
             # verify by reprojection error tentative X-u corresps
-            cl_feats = get_feats(cl_cam)
-            cl_P = P_arr[cl_cam]
+            feats = get_feats(cl_cam)
+            P = P_arr[cl_cam]
+
+            # precompute here for faster checks
+            P_Xs = P @ Xs
+            K_inv_P_Xs = K_inv @ P_Xs
 
             # loop through indexes of remaining unverified X-u correspondences
             crp_ok = []
             theta = 3
             for idx in Xu_tentative:
-                Xi = Xs[:, X_crp[idx]].reshape(4, 1)
+                # get the homogenous image point [u, v, 1]
+                ui_orig = tb.e2p(feats[u_crp[idx]].reshape(2, 1))
 
-                ui_orig = cl_feats[u_crp[idx]].reshape(2, 1)
-                ui_orig = tb.e2p(ui_orig)        # [u, v] --> [u, v, 1]
+                # get the corresp. X projection and normalize it to be also homogenous
+                P_Xi = P_Xs[:, X_crp[idx]].reshape(3, 1)
+                ui_new = tb.e2p(tb.p2e(P_Xi))
 
-                ui_new = cl_P @ Xi
-                ui_new = tb.e2p(tb.p2e(ui_new))  # normalize to the homogenous
-
-                if (K_inv @ cl_P @ Xi)[2] > 0:
+                if K_inv_P_Xs[2, X_crp[idx]] > 0:
                     e_reprj = math.sqrt(
                         (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
                         (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
 
-                    if e_reprj < theta:  # !!assinment: e_reprj**2 < theta**2
-                        # save the indexes to X-u correspondences, OK
-                        crp_ok.append(idx)
+                    if e_reprj**2 < theta**2:
+                        crp_ok.append(idx) # save the indexes to X-u correspondences, OK
 
             # remove the outliers from remaining tentative X-u corresps, OK
             c.verify_x(cl_cam, crp_ok)
 
         c.finalize_camera()
-        print("camera finalized")
+        print("Camera", new_cam,"finalized")
         n_cluster_cams += 1
 
     # ==============================================================================
