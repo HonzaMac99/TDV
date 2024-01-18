@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import math
+from scipy import optimize as opt
+
 import sys
 sys.path.append('..')
-sys.path.append('p5/python')
 sys.path.append('corresp/python')
 sys.path.append('p3p/python')
 sys.path.append('geom_export/python')
 import epipolar as ep
 import tools as tb
-import p5
 import corresp
 import p3p
 import ge
@@ -22,23 +22,57 @@ class Camera:
         self.id = cam_id
 
 
+def correct_crp_sampson(P1, P2, u1, u2):
+    Q1 = P1[:, :3]
+    Q2 = P2[:, :3]
+
+    q1 = P1[:, 3].reshape(3, 1)
+    q2 = P2[:, 3].reshape(3, 1)
+
+    Q12 = Q1 @ np.linalg.inv(Q2)
+
+    # compute F from P1, P2 - slides 108
+    F = Q12.T @ tb.sqc(q1 - Q12 @ q2)
+    return F
+    # nu1, nu2 = tb.u_correct_sampson(F, u1, u2)
+
+    # return nu1, nu2
+
+
+def correct_crp_sampson_2(P1, P2, u1, u2):
+    K = np.loadtxt('scene_1/K.txt', dtype='float')
+    K_inv = np.linalg.inv(K)
+    R1 = (K_inv @ P1)[:, :3]
+    R2 = (K_inv @ P2)[:, :3]
+    R21 = R2 @ R1.T
+    t21 = P2[:, 3] - R21 @ P1[:, 3]
+
+    # compute F from P1, P2 using K, Rs and ts - slides 79
+    F = K_inv.T @ tb.sqc(-t21) @ R21 @ K_inv
+    return F
+    # nu1, nu2 = tb.u_correct_sampson(F, u1, u2)
+
+    # return nu1, nu2
+
+
 # get colors from the images of the camera pair into the 3D plot:
-def get_3d_colors(cam1, cam2, inls, sparsity=1):
+def get_3d_colors(cam1, cam2, inls):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
     crp = get_corresps(cam1, cam2)  # cams corresp. features indexes
     img1 = get_img(cam1)            # img from cam1
     img2 = get_img(cam2)            # img from cam2
+
+    img1_points = f1[crp[:, 0]].T
+    img2_points = f2[crp[:, 1]].T
+
     colors = []
-    for i in range(0, len(inls), sparsity):
-        idx = inls[i]
-        img1_point = f1[crp[idx, 0]].reshape(2,)
-        [x, y] = np.round(img1_point).astype(int)
+    for i in range(0, len(inls)):
+        [x, y] = np.round(img1_points[:, i]).astype(int)
         [r, g, b] = img1[y, x]
         color1 = (r/255.0, g/255.0, b/255.0)
 
-        img2_point = f2[crp[idx, 1]].reshape(2,)
-        [x, y] = np.round(img2_point).astype(int)
+        [x, y] = np.round(img2_points[:, i]).astype(int)
         [r, g, b] = img2[y, x]
         color2 = (r/255.0, g/255.0, b/255.0)
 
@@ -49,35 +83,52 @@ def get_3d_colors(cam1, cam2, inls, sparsity=1):
     return colors
 
 
-def get_3d_points(cam1, cam2, inls, P1, P2, sparsity=1):
+def get_3d_points(cam1, cam2, inls, P1, P2):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
     crp = get_corresps(cam1, cam2)  # cams corresp. f. indexes
-    Xs = np.zeros((4, 0))
-    for i in range(0, len(inls), sparsity):
-        idx = inls[i]
-        u1 = tb.e2p(f1[crp[idx, 0]].reshape((2, 1)))
-        u2 = tb.e2p(f2[crp[idx, 1]].reshape((2, 1)))
-        X = tb.Pu2X(P1, P2, u1, u2)
-        Xs = np.hstack((Xs, X))
+
+    # pick features u1, u2 at indexes defined by inlier corresps
+    u1 = tb.e2p(f1[crp[inls, 0]].T)
+    u2 = tb.e2p(f2[crp[inls, 1]].T)
+
+    # fig, ax = plt.subplots(1, 1)
+    # ax.invert_yaxis()
+    # ax.scatter(u1[0, :], u1[1, :], marker='o', color='blue', s=20)
+
+    # correct the correspondences using the sampson error correction
+    # nu1, nu2 = correct_crp_sampson(P1, P2, u1, u2)
+
+    # ax.scatter(nu1[0, :], nu1[1, :], marker='x', color='orange', s=20)
+    # plt.show()
+
+    R = (K_inv @ P2)[:, :3]
+    t = (K_inv @ P2)[:, 3]
+
+    F1 = correct_crp_sampson(P1, P2, u1, u2)
+    F2 = correct_crp_sampson_2(P1, P2, u1, u2)
+
+    Xs = tb.Pu2X(P1, P2, u1, u2)
 
     return Xs
 
 
-def get_new_3d_colors(cam1, cam2, crp, sparsity=1):
+def get_new_3d_colors(cam1, cam2, crp):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
     img1 = get_img(cam1)            # img from cam1
     img2 = get_img(cam2)            # img from cam2
+
+    img1_points = f1[crp[:, 0]].T
+    img2_points = f2[crp[:, 1]].T
+
     colors = []
-    for i in range(0, len(crp), sparsity):
-        img1_point = f1[crp[i, 0]].reshape(2,)
-        [x, y] = np.round(img1_point).astype(int)
+    for i in range(0, len(crp)):
+        [x, y] = np.round(img1_points[:, i]).astype(int)
         [r, g, b] = img1[y, x]
         color1 = (r/255.0, g/255.0, b/255.0)
 
-        img2_point = f2[crp[i, 1]].reshape(2,)
-        [x, y] = np.round(img2_point).astype(int)
+        [x, y] = np.round(img2_points[:, i]).astype(int)
         [r, g, b] = img2[y, x]
         color2 = (r/255.0, g/255.0, b/255.0)
 
@@ -91,12 +142,25 @@ def get_new_3d_colors(cam1, cam2, crp, sparsity=1):
 def get_new_3d_points(cam1, cam2, crp, P1, P2):
     f1 = get_feats(cam1)            # cam1 features
     f2 = get_feats(cam2)            # cam2 features
-    Xs = np.zeros((4, 0))
-    for i in range(0, len(crp)):
-        u1 = tb.e2p(f1[crp[i, 0]].reshape((2, 1)))
-        u2 = tb.e2p(f2[crp[i, 1]].reshape((2, 1)))
-        X = tb.Pu2X(P1, P2, u1, u2)
-        Xs = np.hstack((Xs, X))
+
+    u1 = tb.e2p(f1[crp[:, 0]].T)
+    u2 = tb.e2p(f2[crp[:, 1]].T)
+
+    R = P2[:, :3]
+    t = P2[:, 3]
+
+    # correct the correspondences using the sampson error correction
+    # nu1, nu2 = correct_crp_sampson(P1, P2, u1, u2)
+    # nu1, nu2 = correct_crp_sampson_2(K, R, t, u1, u2)
+
+    K = np.loadtxt('scene_1/K.txt', dtype='float')
+    R = (K_inv @ P2)[:, :3]
+    t = (K_inv @ P2)[:, 3]
+
+    F1 = correct_crp_sampson(P1, P2, u1, u2)
+    F2 = correct_crp_sampson_2(K, R, t, u1, u2)
+
+    Xs = tb.Pu2X(P1, P2, u1, u2)
 
     return Xs
 
@@ -230,7 +294,7 @@ def plot_error_hist(err_array, treshold, n_inliers):
     
 
 def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
-    ''' get new camera parameters such as R, t and inlier idxs
+    ''' get new camera parameters such as R, t and inlier idxs of X-u corrspondences
         in: cam_id  ... [int] id of the camera
         in: Xs      ... [4xn] homogenous array of all 3D points
         in: Xs_crp  ... [int array] of idxs for 3D points Xs, obtained from c.get_Xu(cam_id)
@@ -260,7 +324,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     k = 0
     k_max = np.inf
     theta = 3  # pixels
-    probability = 0.99
+    probability = 0.9999
     k_max_reached = False
     while not k_max_reached:
         rand_idx = rng.choice(np.arange(n_crp), size=3, replace=False)
@@ -273,7 +337,8 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
         Us_triple = K_inv @ tb.e2p(Us_triple)  # the points should be rectified first by K_inv for the p3p!
 
         if not Xs_triple[:3, :].any():
-            print("The triple is degenerate - points are zeros")
+            print("The Xs triple is degenerate - points are zeros:")
+            print(Xs_triple)
             continue
 
         Xs_local_arr = p3p.p3p_grunert(Xs_triple, Us_triple)  # compute local coords of the Xs_triple
@@ -345,7 +410,9 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 k_max_reached = True
                 break
 
-        iter_treshold = 1000
+        # assert k >= 1000, "TIMEOUT on " + str(k) + "-th iteration!! -------------------------"
+
+        iter_treshold = 5000
         if iter_treshold - 50 < k < iter_treshold:
             print("Warning: too much iterations:", k)
         elif k >= iter_treshold:
@@ -360,6 +427,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
     # display a histogram of the reprj. error distribution
     plot_error_hist(best_errors, theta, len(best_inlier_idxs))
+
 
     return best_R, best_t, best_inlier_idxs
 
@@ -417,12 +485,14 @@ if __name__ == '__main__':
         new_cam = tent_cams[np.argmax(n_tent_crp)]
         print("best_cam is (from 0): ", new_cam)
 
-        # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
         X_crp, u_crp, _ = c.get_Xu(new_cam)
-        R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
-        P_arr[new_cam] = K @ np.hstack((R, t))
-
         cam_crp_prev = np.array(c.get_m(new_cam, cam1)).T
+
+        # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
+        R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
+        # todo: refine the R, t by numeric minimisation of reprj. error
+
+        P_arr[new_cam] = K @ np.hstack((R, t))
 
         # add the new camera to the cluster, OK
         c.join_camera(new_cam, new_inls)
@@ -435,14 +505,13 @@ if __name__ == '__main__':
         assert np.array_equal(X_crp_after, X_crp[new_inls]), "New 3D points do not match the inliers!"
         # check also the img-img correspondences?
 
-        # get ids of cameras that still have corresp m[][] to the new_cam
+        # get ids of cameras that still have img-img corresps to the new_cam
         nb_cam_list = c.get_cneighbours(new_cam)
         for nb_cam in nb_cam_list:
-            print("Reconstructing from", new_cam, "-->", nb_cam, "img-img correspondences")
-
             assert P_arr[nb_cam] is not None, "We should know the transformations of neighbors!"
 
             cam_crp = np.array(c.get_m(new_cam, nb_cam)).T
+            print("Reconstructing from", cam_crp.shape[0], new_cam, "->", nb_cam, "img-img correspondences")
 
             P1 = P_arr[new_cam]
             P2 = P_arr[nb_cam]
@@ -464,6 +533,8 @@ if __name__ == '__main__':
                     colors.append(new_colors[i])    # append new color
                     inls.append(i)                  # indexes to the cam_crp, OK
 
+            # Xs = np.hstack((Xs, new_Xs[:, inls]))
+
             X_ids = np.arange(len(inls)) + len(X_ids)  # IDs of the reconstructed scene points
 
             # store the new X-u corresps as selected for both cameras, delete the remaining u-u corresps, OK
@@ -472,9 +543,9 @@ if __name__ == '__main__':
         # verify the tentative corresp emerged in the cluster --> the cluster should contain only verified X-u
         cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
         for cl_cam in cam_cluster_list:
-            print("Verifying", new_cam, "--", cl_cam, "tentative Xu correspondences")
             [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
             Xu_tentative = np.where(~Xu_verified)[0]
+            print("Verifying", Xu_tentative.shape[0], new_cam, "--", cl_cam, "tentative Xu correspondences")
 
             # verify by reprojection error tentative X-u corresps
             feats = get_feats(cl_cam)

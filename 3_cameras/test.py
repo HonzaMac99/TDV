@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
 import numpy as np
-# import math
-import matplotlib.pyplot as plt
+from scipy import optimize as opt
 
-# Create a random number generator with a fixed seed for reproducibility
-rng = np.random.default_rng(19680801)
+def get_error(x):
+    return np.abs(x - 1)
 
-# N_points = 100000
-# n_bins = 20
+# this function must return scalar value
+def get_y(x):
+    return sum(get_error(x))
 
-N_points = 20
-n_bins = 20
 
-# arr = np.array([1, 2, 3, 4, 4, 4, 4, 5, 6, 2, 4, 1])
-arr = rng.standard_normal(N_points)
+x_init = [0.5, -0.4, 0.5, 0.8]
+result = opt.fmin(get_y, x_init)
 
-# Generate two normal distributions
-dist1 = rng.standard_normal(N_points)
+# todo: use this reprj error for minimisation
 
-fig, ax = plt.subplots(1, 1, tight_layout=True)
-# fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)
+print(result)
 
-# We can set the number of bins with the *bins* keyword argument.
-ax.hist(arr, bins=n_bins)
-# axs[1].hist(dist2, bins=n_bins)
 
-plt.show()
