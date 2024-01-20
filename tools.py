@@ -75,6 +75,8 @@ def p2e(u_p):
         u_e[:, i] = u_p[:-1, i]/u_p[-1, i]
     return u_e
 
+def norm(u_p):
+    return e2p(p2e(u_p))
 
 # counts vectors length
 def vlen(x):
@@ -181,6 +183,8 @@ def u_correct_sampson(F, u1, u2):
 
     u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
     u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+
+    # init the corrected img corresp
     nu1 = u1
     nu2 = u2
 
@@ -201,5 +205,75 @@ def u_correct_sampson(F, u1, u2):
         new_u12_vec = u12_vec - e * J_t
         nu1[0:2, i] = new_u12_vec[0:2].reshape(1, 2)
         nu2[0:2, i] = new_u12_vec[2:4].reshape(1, 2)
+    # print(e)
+
+    return nu1, nu2
+
+
+def u_correct_sampson_2(F, u1, u2):
+    n_points = u1.shape[1]
+
+    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+
+    S = [[1, 0, 0], [0, 1, 0]]
+    SF_t = S @ F.T
+    SF = S @ F
+
+    # init the corrected img corresp
+    nu1 = u1
+    nu2 = u2
+
+    for i in range(n_points):
+        u1_i = np.vstack(u1[:, i])
+        u2_i = np.vstack(u2[:, i])
+        e = u2_i.T @ F @ u1_i
+
+        u12_vec = np.vstack((u1_i[0],
+                             u1_i[1],
+                             u2_i[0],
+                             u2_i[1]))
+
+        J_t = np.concatenate((SF_t @ u2_i, SF @ u1_i))
+
+        new_u12_vec = u12_vec - (e * J_t) / np.sum(J_t ** 2)
+        nu1[0:2, i] = new_u12_vec[0:2].reshape(1, 2)
+        nu2[0:2, i] = new_u12_vec[2:4].reshape(1, 2)
+    # print(e / np.sum(J_t ** 2))
+
+    return nu1, nu2
+
+
+# compute F from P1, P2 - slides 108
+def get_F_from_P(P1, P2):
+    Q1, q1 = P1[:, :3], P1[:, 3].reshape(3, 1)
+    Q2, q2 = P2[:, :3], P2[:, 3].reshape(3, 1)
+
+    Q12 = Q1 @ np.linalg.inv(Q2)
+
+    F = Q12.T @ sqc(q1 - Q12 @ q2)
+
+    return F
+
+
+# compute F from P1, P2 using K, Rs and ts - slides 79
+def get_F_from_P_2(P1, P2):
+    K = np.loadtxt('scene_1/K.txt', dtype='float')
+    K_inv = np.linalg.inv(K)
+    R1 = (K_inv @ P1)[:, :3]
+    R2 = (K_inv @ P2)[:, :3]
+    R21 = R2 @ R1.T
+    t21 = P2[:, 3] - R21 @ P1[:, 3]
+    E = sqc(-t21) @ R21
+
+    F = K_inv.T @ E @ K_inv
+    return F
+
+
+def correct_crp_sampson(P1, P2, u1, u2):
+    F = get_F_from_P(P1, P2)
+
+    # nu1, nu2 = tb.u_correct_sampson(F, u1, u2)
+    nu1, nu2 = u_correct_sampson_2(F, u1, u2)
 
     return nu1, nu2

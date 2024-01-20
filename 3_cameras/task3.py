@@ -2,10 +2,9 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 from scipy import optimize as opt
 
-import sys
+import os, sys
 sys.path.append('..')
 sys.path.append('corresp/python')
 sys.path.append('p3p/python')
@@ -16,224 +15,35 @@ import corresp
 import p3p
 import ge
 
+# custom functions
+from load import *
+from plot import *
+from geometry import *
+
 
 class Camera:
+    id = -1
+    K = np.zeros((3, 3))
+    P = np.zeros((3, 4))
+    f = np.zeros((2, 1))
+    img = None
+
     def __init__(self, cam_id):
         self.id = cam_id
+        self.K = np.loadtxt('scene_1/K.txt', dtype='float')
+
+    def is_valid(self):
+        return self.id >= 0 and self.P.any() and self.f.any()
 
 
-def correct_crp_sampson(P1, P2, u1, u2):
-    Q1 = P1[:, :3]
-    Q2 = P2[:, :3]
-
-    q1 = P1[:, 3].reshape(3, 1)
-    q2 = P2[:, 3].reshape(3, 1)
-
-    Q12 = Q1 @ np.linalg.inv(Q2)
-
-    # compute F from P1, P2 - slides 108
-    F = Q12.T @ tb.sqc(q1 - Q12 @ q2)
-    return F
-    # nu1, nu2 = tb.u_correct_sampson(F, u1, u2)
-
-    # return nu1, nu2
-
-
-def correct_crp_sampson_2(P1, P2, u1, u2):
-    K = np.loadtxt('scene_1/K.txt', dtype='float')
-    K_inv = np.linalg.inv(K)
-    R1 = (K_inv @ P1)[:, :3]
-    R2 = (K_inv @ P2)[:, :3]
-    R21 = R2 @ R1.T
-    t21 = P2[:, 3] - R21 @ P1[:, 3]
-
-    # compute F from P1, P2 using K, Rs and ts - slides 79
-    F = K_inv.T @ tb.sqc(-t21) @ R21 @ K_inv
-    return F
-    # nu1, nu2 = tb.u_correct_sampson(F, u1, u2)
-
-    # return nu1, nu2
-
-
-# get colors from the images of the camera pair into the 3D plot:
-def get_3d_colors(cam1, cam2, inls):
-    f1 = get_feats(cam1)            # cam1 features
-    f2 = get_feats(cam2)            # cam2 features
-    crp = get_corresps(cam1, cam2)  # cams corresp. features indexes
-    img1 = get_img(cam1)            # img from cam1
-    img2 = get_img(cam2)            # img from cam2
-
-    img1_points = f1[crp[:, 0]].T
-    img2_points = f2[crp[:, 1]].T
-
-    colors = []
-    for i in range(0, len(inls)):
-        [x, y] = np.round(img1_points[:, i]).astype(int)
-        [r, g, b] = img1[y, x]
-        color1 = (r/255.0, g/255.0, b/255.0)
-
-        [x, y] = np.round(img2_points[:, i]).astype(int)
-        [r, g, b] = img2[y, x]
-        color2 = (r/255.0, g/255.0, b/255.0)
-
-        color = ((color1[0] + color2[0])/2,
-                 (color1[1] + color2[1])/2,
-                 (color1[2] + color2[2])/2)
-        colors.append(color)
-    return colors
-
-
-def get_3d_points(cam1, cam2, inls, P1, P2):
-    f1 = get_feats(cam1)            # cam1 features
-    f2 = get_feats(cam2)            # cam2 features
-    crp = get_corresps(cam1, cam2)  # cams corresp. f. indexes
-
-    # pick features u1, u2 at indexes defined by inlier corresps
-    u1 = tb.e2p(f1[crp[inls, 0]].T)
-    u2 = tb.e2p(f2[crp[inls, 1]].T)
-
-    # fig, ax = plt.subplots(1, 1)
-    # ax.invert_yaxis()
-    # ax.scatter(u1[0, :], u1[1, :], marker='o', color='blue', s=20)
-
-    # correct the correspondences using the sampson error correction
-    # nu1, nu2 = correct_crp_sampson(P1, P2, u1, u2)
-
-    # ax.scatter(nu1[0, :], nu1[1, :], marker='x', color='orange', s=20)
-    # plt.show()
-
-    R = (K_inv @ P2)[:, :3]
-    t = (K_inv @ P2)[:, 3]
-
-    F1 = correct_crp_sampson(P1, P2, u1, u2)
-    F2 = correct_crp_sampson_2(P1, P2, u1, u2)
-
-    Xs = tb.Pu2X(P1, P2, u1, u2)
-
-    return Xs
-
-
-def get_new_3d_colors(cam1, cam2, crp):
-    f1 = get_feats(cam1)            # cam1 features
-    f2 = get_feats(cam2)            # cam2 features
-    img1 = get_img(cam1)            # img from cam1
-    img2 = get_img(cam2)            # img from cam2
-
-    img1_points = f1[crp[:, 0]].T
-    img2_points = f2[crp[:, 1]].T
-
-    colors = []
-    for i in range(0, len(crp)):
-        [x, y] = np.round(img1_points[:, i]).astype(int)
-        [r, g, b] = img1[y, x]
-        color1 = (r/255.0, g/255.0, b/255.0)
-
-        [x, y] = np.round(img2_points[:, i]).astype(int)
-        [r, g, b] = img2[y, x]
-        color2 = (r/255.0, g/255.0, b/255.0)
-
-        color = ((color1[0] + color2[0])/2,
-                 (color1[1] + color2[1])/2,
-                 (color1[2] + color2[2])/2)
-        colors.append(color)
-    return colors
-
-
-def get_new_3d_points(cam1, cam2, crp, P1, P2):
-    f1 = get_feats(cam1)            # cam1 features
-    f2 = get_feats(cam2)            # cam2 features
-
-    u1 = tb.e2p(f1[crp[:, 0]].T)
-    u2 = tb.e2p(f2[crp[:, 1]].T)
-
-    R = P2[:, :3]
-    t = P2[:, 3]
-
-    # correct the correspondences using the sampson error correction
-    # nu1, nu2 = correct_crp_sampson(P1, P2, u1, u2)
-    # nu1, nu2 = correct_crp_sampson_2(K, R, t, u1, u2)
-
-    K = np.loadtxt('scene_1/K.txt', dtype='float')
-    R = (K_inv @ P2)[:, :3]
-    t = (K_inv @ P2)[:, 3]
-
-    F1 = correct_crp_sampson(P1, P2, u1, u2)
-    F2 = correct_crp_sampson_2(K, R, t, u1, u2)
-
-    Xs = tb.Pu2X(P1, P2, u1, u2)
-
-    return Xs
-
-
-# get the projection matrices, camera centres and unit z axis point for a pair of cameras
-def get_geometry(K, R, t):
-    # camera projections working with uncalibrated points
-    P1 = K @ np.eye(3, 4)
-    P2 = K @ np.hstack((R, t))
-    Ps = [P1, P2]  # do not use ndarray here
-
-    # camera centers
-    C1 = np.zeros((3, 1))
-    C2 = -R.T @ t
-    Cs = np.hstack((C1, C2))
-
-    # unit points on z axis
-    z1 = np.array([0, 0, 1]).reshape(3, 1)
-    z2 = C2 + R[2, :].reshape(3, 1)
-    zs = np.hstack((z1, z2))
-
-    return Ps, Cs, zs
-
-
-def get_new_geometry(K_inv, P):
-    assert P is not None, "Got P that is None!"
-    R = (K_inv @ P)[:, :3]
-    t = (K_inv @ P)[:, 3]
-
-    new_C = (-R.T @ t).reshape(3, 1)
-    new_z = new_C + R[2, :].reshape(3, 1)
-    return new_C, new_z
-
-
-def get_corresps(i, j):
-    i += 1
-    j += 1
-    if i > j:
-        i, j = j, i
-    if i < 10 and j < 10:
-        f_name = 'm_0{}_0{}.txt'.format(i, j)
-    elif i >= 10 and j < 10:
-        f_name = 'm_{}_0{}.txt'.format(i, j)
-    elif i < 10 and j >= 10:
-        f_name = 'm_0{}_{}.txt'.format(i, j)
-    else:
-        f_name = 'm_{}_{}.txt'.format(i, j)
-
-    path = 'scene_1/corresp/{}'.format(f_name)
-    corresps = np.genfromtxt(path, dtype='int')
-    return corresps
-
-
-def get_feats(i):
-    i += 1
-    if i < 10:
-        f_name = 'u_0{}.txt'.format(i)
-    else:
-        f_name = 'u_{}.txt'.format(i)
-
-    path = 'scene_1/corresp/{}'.format(f_name)
-    feats = np.genfromtxt(path, dtype='float')
-    return feats
-
-def get_img(i):
-    i += 1
-    if i < 10:
-        f_name = '0{}.jpg'.format(i)
-    else:
-        f_name = '{}.jpg'.format(i)
-
-    img = mpimg.imread('scene_1/images/{}'.format(f_name))
-    return img
+def init_cameras(n_cameras):
+    cameras = []
+    for i in range(n_cameras):
+        new_cam = Camera(i)
+        new_cam.f = get_feats(i)
+        new_cam.img = get_img(i)
+        cameras.append(new_cam)
+    return np.array(cameras)
 
 
 def init_c(n_cameras, verbose):
@@ -245,53 +55,6 @@ def init_c(n_cameras, verbose):
             c.add_pair(i, j, corresps)
     return c
 
-
-# plot the comparison between the original features and the
-# projections of corresponding 3D points (Xs) by the best estimated R and t
-def plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp):
-    fig, ax = plt.subplots(1, 1)
-    ax.invert_yaxis()
-
-    best_P = K @ np.hstack((best_R, best_t))
-    n_crp = len(Xs_crp)
-
-    best_outlier_idxs = np.ones(n_crp)
-    best_outlier_idxs[best_inlier_idxs] = False
-    best_outlier_idxs = best_outlier_idxs.nonzero()
-
-    crp_feats = feats[u_crp, :].T
-    crp_feats_in = crp_feats[:, best_inlier_idxs]
-    crp_feats_out = crp_feats[:, best_outlier_idxs]
-
-    crp_proj = best_P @ Xs[:, Xs_crp]
-    crp_proj = tb.e2p(tb.p2e(crp_proj))  # normalize to the homogenous
-    crp_proj_in = crp_proj[:, best_inlier_idxs]
-    crp_proj_out = crp_proj[:, best_outlier_idxs]
-
-    ax.scatter(crp_feats_out[0, :], crp_feats_out[1, :], marker='o', color='gray', s=20)
-    ax.scatter(crp_proj_out[0, :], crp_proj_out[1, :], marker='x', color='gray', s=20)
-
-    ax.scatter(crp_feats_in[0, :], crp_feats_in[1, :], marker='o', color='red', s=20)
-    ax.scatter(crp_proj_in[0, :], crp_proj_in[1, :], marker='x', color='blue', s=20)
-
-    plt.show()
-
-
-def plot_error_hist(err_array, treshold, n_inliers):
-    max_val = 100  # 3000
-    n_bins = 100
-    hist_range = (0, max_val)
-    err_array.clip(min=None, max=max_val)
-    plt.hist(err_array, bins=n_bins, range=hist_range)
-    plt.axvline(x=treshold, color='red', linestyle='--', label='treshold')
-
-    plt.title('Repr. error histogram: ' + str(n_inliers) + ' inliers')
-    plt.xlabel('Value')
-    plt.ylabel('Frequency')
-    plt.grid(True)
-
-    plt.show()
-    
 
 def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     ''' get new camera parameters such as R, t and inlier idxs of X-u corrspondences
@@ -354,11 +117,11 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
             # We want to project 3D points to camera with P2 to compute the distance error between
             # projection and the original image correspondence to X
             X = Xs[:, Xs_crp]
-            u_orig = tb.e2p(feats[u_crp].T)
-            u_new  = tb.e2p(tb.p2e(P2 @ X))
+            P2_X = P2 @ X  # precompute the projection
 
-            # precompute the transformations here for faster checks
-            P2_X = P2 @ X
+            u_orig = tb.e2p(feats[u_crp].T)
+            u_new  = tb.e2p(tb.p2e(P2_X))
+
 
             support = 0
             inlier_idxs = []
@@ -369,17 +132,13 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 ui_new  = u_new[:, i].reshape(3, 1)
 
                 # note: Xi is already in front of the P1
-                # assert (K_inv @ np.eye(3, 4) @ Xi)[2] > 0, "Point from the global pointcloud should not have z negative"
-
                 # note: when support is < 3, one or more of the selected 3D points project behind the camera P2
-
-                # Check if computing with K_inv makes a difference --> no difference experienced so far
-                # assert ((K_inv @ P2 @ Xi)[2] >  0 and (P2 @ Xi)[2] >  0) or \
-                #        ((K_inv @ P2 @ Xi)[2] <= 0 and (P2 @ Xi)[2] <= 0), "Check: the conditions give different results"
+                # note: checking "(K_inv @ P2 @ Xi)[2] > 0" or checking "(P2 @ Xi)[2] > 0" makes no difference
 
                 # compute the sampson error only for points in front of the camera
                 if P2_X[2, i] > 0:
 
+                    # euclidean reprojection error
                     e_reprj = math.sqrt(
                         (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
                         (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
@@ -388,9 +147,8 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
                     if e_reprj**2 <= theta**2:
                         support += float(1 - e_reprj**2/theta**2)
-
-                        # note: c.join_camera works with indexes (i) of Xs_crp and not its elements to keep the inliers
                         inlier_idxs.append(i)
+                        # note: c.join_camera works with indexes (i) of Xs_crp and not its elements to keep the inliers
 
             # store the best results and display stats
             if support > best_support:
@@ -434,36 +192,40 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
 
 if __name__ == '__main__':
 
-    cam1, cam2 = 0, 1
-    # cam1, cam2 = 5, 6
-    img1, img2 = get_img(cam1), get_img(cam2)
-    feats1, feats2 = get_feats(cam1), get_feats(cam2)
+    n_cams = 12
+    cameras = init_cameras(n_cams)
+    cam1, cam2 = cameras[[0, 1]]
+    # cam1, cam2 = cameras[[7, 11]]
     K = np.loadtxt('scene_1/K.txt', dtype='float')
     K_inv = np.linalg.inv(K)
 
-    n_cams = 12
-    P_arr = [None] * n_cams
-    corr_verbose = 0  # 1
-    c = init_c(n_cams, corr_verbose)
-    corresps = np.array(c.get_m(cam1, cam2)).T
+    c_verbose = 0  # 0 or 1
+    c = init_c(n_cams, c_verbose)
+    corresps = np.array(c.get_m(cam1.id, cam2.id)).T
 
-    # perform the E estimation of initial camera pair, OK
-    E, R, t, inls = ep.ransac_E(feats1, feats2, corresps, K)
+    # perform the E estimation of initial camera pair (or load them from files)
+    # do not stop between refresh() and save_E_params() calls!!
+    if refresh(cam1.id, cam2.id):
+        E, R, t, inls = ep.ransac_E(cam1.f, cam2.f, corresps, K)
+        save_E_params(E, R, t, inls)
+    else:
+        E, R, t, inls = load_E_params()
+        print("E, R, t, inls loaded from files")
+
     F = K_inv.T @ E @ K_inv
 
-    # ep.plot_inliers(img1, feats1, feats2, corresps, inls)
-    # ep.plot_e_lines(img1, img2, feats1, feats2, corresps, inls, F)
+    # ep.plot_inliers(cam1.img, cam1.f, cam2.f, corresps, inls)
+    # ep.plot_e_lines(cam1.img, cam2.img, cam1.f, cam2.f, corresps, inls, F)
 
     Ps, Cs, zs = get_geometry(K, R, t)
-    P_arr[cam1] = Ps[0]
-    P_arr[cam2] = Ps[1]
+    cam1.P, cam2.P = Ps
 
     # get initial 3d points and their corresponding colors
-    Xs = get_3d_points(cam1, cam2, inls, Ps[0], Ps[1])
+    Xs = get_3d_points(cam1, cam2, inls, K, True)
     colors = get_3d_colors(cam1, cam2, inls)
     X_ids = np.arange(Xs.shape[1])  # IDs of the reconstructed scene points
 
-    c.start(cam1, cam2, inls, X_ids)
+    c.start(cam1.id, cam2.id, inls, X_ids)
     n_cluster_cams = 2
     # n_cams = 7  # fewer cameras for testing
 
@@ -482,85 +244,100 @@ if __name__ == '__main__':
             break
 
         # get new cam with the most tentative corresp
-        new_cam = tent_cams[np.argmax(n_tent_crp)]
-        print("best_cam is (from 0): ", new_cam)
+        new_cam_id = tent_cams[np.argmax(n_tent_crp)]
+        new_cam = cameras[new_cam_id]
+        print("best_cam is (from 0): ", new_cam_id)
 
-        X_crp, u_crp, _ = c.get_Xu(new_cam)
-        cam_crp_prev = np.array(c.get_m(new_cam, cam1)).T
+        X_crp, u_crp, _ = c.get_Xu(new_cam.id)
+        cam_crp_prev = np.array(c.get_m(new_cam.id, cam1.id)).T
 
         # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
-        R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
+        R, t, new_inls = get_new_cam(new_cam.id, Xs, X_crp, u_crp, K)
         # todo: refine the R, t by numeric minimisation of reprj. error
 
-        P_arr[new_cam] = K @ np.hstack((R, t))
+        new_cam.P = K @ np.hstack((R, t))
 
         # add the new camera to the cluster, OK
-        c.join_camera(new_cam, new_inls)
+        c.join_camera(new_cam.id, new_inls)
 
         # get the img-img crp and 3D-img crp after the call of camera join for the asserts
-        X_crp_after, u_crp_after, _ = c.get_Xu(new_cam)
-        cam_crp_after = np.array(c.get_m(new_cam, cam1)).T
+        X_crp_after, u_crp_after, _ = c.get_Xu(new_cam.id)
+        cam_crp_after = np.array(c.get_m(new_cam.id, cam1.id)).T
 
         assert np.array_equal(u_crp_after, u_crp[new_inls]), "New image points do not match the inliers!"
         assert np.array_equal(X_crp_after, X_crp[new_inls]), "New 3D points do not match the inliers!"
         # check also the img-img correspondences?
 
         # get ids of cameras that still have img-img corresps to the new_cam
-        nb_cam_list = c.get_cneighbours(new_cam)
-        for nb_cam in nb_cam_list:
-            assert P_arr[nb_cam] is not None, "We should know the transformations of neighbors!"
+        nb_cam_list = c.get_cneighbours(new_cam.id)
+        for nb_cam_id in nb_cam_list:
+            nb_cam = cameras[nb_cam_id]
+            assert nb_cam.is_valid(), "We should know the transformations of neighbors!"
 
-            cam_crp = np.array(c.get_m(new_cam, nb_cam)).T
-            print("Reconstructing from", cam_crp.shape[0], new_cam, "->", nb_cam, "img-img correspondences")
+            cam_crp = np.array(c.get_m(new_cam.id, nb_cam.id)).T
+            print("Reconstructing from", cam_crp.shape[0], new_cam.id, "->", nb_cam.id, "img-img correspondences")
 
-            P1 = P_arr[new_cam]
-            P2 = P_arr[nb_cam]
+            P1 = new_cam.P
+            P2 = nb_cam.P
 
             # triangulate 3D points from the known Ps of the camera pair
-            new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, P1, P2)
+            new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, K, True)
             new_colors = get_new_3d_colors(new_cam, nb_cam, cam_crp)
 
             # precompute the transformations here for faster checks
             P1_new_X = P1 @ new_Xs
             P2_new_X = P2 @ new_Xs
 
+            u1_orig = tb.e2p(new_cam.f[cam_crp[:, 0]].T)
+            u2_orig = tb.e2p(nb_cam.f[cam_crp[:, 1]].T)
+
             # get inliers with pozitive z
             inls = []  # must be indices to corresp between new_cam and nb_cam
+            theta = 3
             for i in range(new_Xs.shape[1]):   # n of corresps, cam_crp.shape[0] could also be used
-                if P1_new_X[2, i] > 0 and P2_new_X[2, i] > 0:
+                # if P1_new_X[2, i] > 0 and P2_new_X[2, i] > 0:
+
+                # euclidean reprojection error
+                e_reprj_1 = math.sqrt(
+                    (P1_new_X[0, i]/P1_new_X[2, i] - u1_orig[0, i]/u1_orig[2, i])**2 +
+                    (P1_new_X[1, i]/P1_new_X[2, i] - u1_orig[1, i]/u1_orig[2, i])**2)
+                e_reprj_2 = math.sqrt(
+                    (P2_new_X[0, i]/P2_new_X[2, i] - u2_orig[0, i]/u2_orig[2, i])**2 +
+                    (P2_new_X[1, i]/P2_new_X[2, i] - u2_orig[1, i]/u2_orig[2, i])**2)
+                e_reprj = (e_reprj_1 + e_reprj_2) / 2
+
+                if e_reprj**2 < theta**2:
                     new_X = new_Xs[:, i].reshape(4, 1)
                     Xs = np.hstack((Xs, new_X))     # append new 3D point
                     colors.append(new_colors[i])    # append new color
                     inls.append(i)                  # indexes to the cam_crp, OK
 
-            # Xs = np.hstack((Xs, new_Xs[:, inls]))
+            Xs = np.hstack((Xs, new_Xs[:, inls]))
 
             X_ids = np.arange(len(inls)) + len(X_ids)  # IDs of the reconstructed scene points
 
             # store the new X-u corresps as selected for both cameras, delete the remaining u-u corresps, OK
-            c.new_x(new_cam, nb_cam, inls, X_ids)
+            c.new_x(new_cam.id, nb_cam.id, inls, X_ids)
 
         # verify the tentative corresp emerged in the cluster --> the cluster should contain only verified X-u
         cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
-        for cl_cam in cam_cluster_list:
-            [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam)
+        for cl_cam_id in cam_cluster_list:
+            cl_cam = cameras[cl_cam_id]
+            [X_crp, u_crp, Xu_verified] = c.get_Xu(cl_cam_id)
             Xu_tentative = np.where(~Xu_verified)[0]
-            print("Verifying", Xu_tentative.shape[0], new_cam, "--", cl_cam, "tentative Xu correspondences")
-
-            # verify by reprojection error tentative X-u corresps
-            feats = get_feats(cl_cam)
-            P = P_arr[cl_cam]
+            print("Verifying", Xu_tentative.shape[0], new_cam.id, "-->", cl_cam.id, "tentative Xu correspondences")
 
             # precompute here for faster checks
-            P_Xs = P @ Xs
+            P_Xs = cl_cam.P @ Xs
             K_inv_P_Xs = K_inv @ P_Xs
 
+            # verify by reprojection error tentative X-u corresps
             # loop through indexes of remaining unverified X-u correspondences
             crp_ok = []
             theta = 3
             for idx in Xu_tentative:
                 # get the homogenous image point [u, v, 1]
-                ui_orig = tb.e2p(feats[u_crp[idx]].reshape(2, 1))
+                ui_orig = tb.e2p(cl_cam.f[u_crp[idx]].reshape(2, 1))
 
                 # get the corresp. X projection and normalize it to be also homogenous
                 P_Xi = P_Xs[:, X_crp[idx]].reshape(3, 1)
@@ -575,10 +352,10 @@ if __name__ == '__main__':
                         crp_ok.append(idx) # save the indexes to X-u correspondences, OK
 
             # remove the outliers from remaining tentative X-u corresps, OK
-            c.verify_x(cl_cam, crp_ok)
+            c.verify_x(cl_cam.id, crp_ok)
 
         c.finalize_camera()
-        print("Camera", new_cam,"finalized")
+        print("Camera", new_cam.id,"finalized")
         n_cluster_cams += 1
 
     # ==============================================================================
@@ -589,6 +366,7 @@ if __name__ == '__main__':
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     # ax.view_init(elev=-125, azim=100, roll=180)
+    ax.view_init(-75, -90)
     ax.set_xlim([-1.5, 2.5])
     ax.set_ylim([-3, 1])
     ax.set_zlim([-2, 2])
@@ -597,16 +375,15 @@ if __name__ == '__main__':
     # get the remaining camera geometries
     cam_cluster_list = c.get_selected_cameras()  # list of all cameras in the cluster
     for i in range(2, len(cam_cluster_list)):
-    # for idx in range(2, n_cams):
         idx = cam_cluster_list[i]
-        new_C, new_z = get_new_geometry(K_inv, P_arr[idx])
+        new_C, new_z = get_new_geometry(K_inv, cameras[idx].P)
         Cs = np.hstack((Cs, new_C))
         zs = np.hstack((zs, new_z))
 
     # plot the camera centers and their axes
     for i in range(Cs.shape[1]):
         idx = cam_cluster_list[i]
-        if i < 2:
+        if idx == cam1.id or idx == cam2.id:
             cam_color = 'red'
         else:
             cam_color = 'blue'
@@ -617,21 +394,39 @@ if __name__ == '__main__':
                 [Cs[2, i], zs[2, i]], c=cam_color)
 
     # plot the 3D points with colors
-    sparsity = 50
+    sparsity = 1  # 50
     for i in range(Xs.shape[1]):
         if i % sparsity == 0:
-            ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=5, color=colors[i])
-            # ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color="black")
+            ax.scatter(Xs[0, i], Xs[1, i], Xs[2, i], marker='o', s=3, color=colors[i])
 
+    # plt.title(str(Xs.shape[1]) + " points")
+    plt.title("Sparse pointcloud from 12 cameras")
+    print(Xs.shape[1], "points")
     plt.show()
 
+    # ==============================================================================
+    # =                                 Saving                                     =
+    # ==============================================================================
 
-    # g = ge.GePly('out.ply')
-    # colors = np.array(colors).T
-    # Xs = tb.e2p(Xs)
-    # # g.points(Xs, colors) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
+    Xs = tb.p2e(Xs)
+    colors = np.array(colors).T
+
+    # include the camera positions in the pointcloud
+    Xs = np.hstack((Xs, Cs))
+
+    red_c = np.array([1.0, 0, 0]).reshape(3, 1)
+    blue_c = np.array([0, 0, 1.0]).reshape(3, 1)
+    for i in range(Cs.shape[1]):
+        idx = cam_cluster_list[i]
+        if idx == cam1.id or idx == cam2.id:
+            colors = np.hstack((colors, red_c))
+        else:
+            colors = np.hstack((colors, blue_c))
+
+    g = ge.GePly('params/points.ply')
+    g.points(Xs, colors) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
     # g.points(Xs) # Xs contains euclidean points (3xn matrix), l RGB colors (3xn or 3x1, optional)
-    # g.close()
+    g.close()
 
 
 

@@ -2,6 +2,7 @@
 *.zip
 *.pdf
 *.ply
+3_cameras_demo/
 
 .idea/
 __pycache__/
