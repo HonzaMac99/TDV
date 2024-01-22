@@ -5,6 +5,8 @@ import os, sys
 import tools as tb
 from task3 import *
 
+# testing the settings of the plot of the final pointcloud and cameras
+
 Xs = tb.p2e(np.load('params/Xs.npy'))
 colors = np.load('params/colors.npy').T
 Cs = np.load('params/Cs.npy')
@@ -44,3 +46,4 @@ for i in range(Xs.shape[1]):
 plt.title("Sparse pointcloud from 12 cameras")
 print(Xs.shape[1], "points")
 plt.show()
+

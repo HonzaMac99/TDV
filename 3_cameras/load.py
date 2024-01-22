@@ -75,3 +75,4 @@ def save_E_params(E, R, t, inls):
     np.save('params/R.npy', R)
     np.save('params/t.npy', t)
     np.save('params/inls.npy', inls)
+

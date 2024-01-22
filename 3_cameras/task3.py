@@ -3,6 +3,7 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 from scipy import optimize as opt
+from scipy.spatial.transform import Rotation as Rot
 
 import os, sys
 sys.path.append('..')
@@ -56,6 +57,7 @@ def init_c(n_cameras, verbose):
     return c
 
 
+# p3p ransac to get R, t
 def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     ''' get new camera parameters such as R, t and inlier idxs of X-u corrspondences
         in: cam_id  ... [int] id of the camera
@@ -186,7 +188,6 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     # display a histogram of the reprj. error distribution
     plot_error_hist(best_errors, theta, len(best_inlier_idxs))
 
-
     return best_R, best_t, best_inlier_idxs
 
 
@@ -207,6 +208,7 @@ if __name__ == '__main__':
     # do not stop between refresh() and save_E_params() calls!!
     if refresh(cam1.id, cam2.id):
         E, R, t, inls = ep.ransac_E(cam1.f, cam2.f, corresps, K)
+        # todo: R, t = optimize_init_Rt(cam1, cam2, inls, R, t)
         save_E_params(E, R, t, inls)
     else:
         E, R, t, inls = load_E_params()
@@ -217,12 +219,12 @@ if __name__ == '__main__':
     # ep.plot_inliers(cam1.img, cam1.f, cam2.f, corresps, inls)
     # ep.plot_e_lines(cam1.img, cam2.img, cam1.f, cam2.f, corresps, inls, F)
 
-    Ps, Cs, zs = get_geometry(K, R, t)
+    Ps, Cs, zs = get_init_geometry(K, R, t)
     cam1.P, cam2.P = Ps
 
     # get initial 3d points and their corresponding colors
-    Xs = get_3d_points(cam1, cam2, inls, K, True)
-    colors = get_3d_colors(cam1, cam2, inls)
+    Xs = get_init_3d_points(cam1, cam2, inls, K, True)
+    colors = get_init_3d_colors(cam1, cam2, inls)
     X_ids = np.arange(Xs.shape[1])  # IDs of the reconstructed scene points
 
     c.start(cam1.id, cam2.id, inls, X_ids)
@@ -253,7 +255,7 @@ if __name__ == '__main__':
 
         # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
         R, t, new_inls = get_new_cam(new_cam.id, Xs, X_crp, u_crp, K)
-        # todo: refine the R, t by numeric minimisation of reprj. error
+        # todo: R, t = optimize_new_Rt(cam1, cam2, new_inls, R, t)
 
         new_cam.P = K @ np.hstack((R, t))
 

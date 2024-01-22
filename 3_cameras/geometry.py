@@ -4,7 +4,7 @@ from load import *
 
 
 # get colors from the images of the camera pair into the 3D plot:
-def get_3d_colors(cam1, cam2, inls):
+def get_init_3d_colors(cam1, cam2, inls):
     f1, f2 = cam1.f, cam2.f               # feature points in images
     img1, img2 = cam1.img, cam2.img       # camera images
     crp = get_corresps(cam1.id, cam2.id)  # corresponding feature indexes
@@ -29,7 +29,7 @@ def get_3d_colors(cam1, cam2, inls):
     return colors
 
 
-def get_3d_points(cam1, cam2, inls, K, correct=True):
+def get_init_3d_points(cam1, cam2, inls, K, correct=True):
     P1, P2 = cam1.P, cam2.P  # projection matrices
     f1, f2 = cam1.f, cam2.f  # features
     crp = get_corresps(cam1.id, cam2.id)  # cams corresp. f. indexes
@@ -98,7 +98,7 @@ def get_new_3d_points(cam1, cam2, crp, K, correct=True):
 
 
 # get the projection matrices, camera centres and unit z axis point for a pair of cameras
-def get_geometry(K, R, t):
+def get_init_geometry(K, R, t):
     # camera projections working with uncalibrated points
     P1 = K @ np.eye(3, 4)
     P2 = K @ np.hstack((R, t))
@@ -124,4 +124,6 @@ def get_new_geometry(K_inv, P):
 
     new_C = (-R.T @ t).reshape(3, 1)
     new_z = new_C + R[2, :].reshape(3, 1)
+
     return new_C, new_z
+

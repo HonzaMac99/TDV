@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import tools as tb
 
 
-# plot the comparison between the original features and the
+# plot the comparison between the original feature points and the
 # projections of corresponding 3D points (Xs) by the best estimated R and t
 def plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp, temp=True):
     fig, ax = plt.subplots(1, 1)
