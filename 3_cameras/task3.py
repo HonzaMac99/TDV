@@ -2,10 +2,7 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-from scipy import optimize as opt
-from scipy.spatial.transform import Rotation as Rot
-
-import os, sys
+import sys
 sys.path.append('..')
 sys.path.append('corresp/python')
 sys.path.append('p3p/python')
@@ -20,7 +17,7 @@ import ge
 from load import *
 from plot import *
 from geometry import *
-# [OPT] from opt import *
+from opt import *
 
 
 class Camera:
@@ -208,7 +205,7 @@ if __name__ == '__main__':
     F = K_inv.T @ E @ K_inv
 
     # perform the optimisation over the new R and t
-    # [OPT] R, t = optimize_init_Rt(cam1, cam2, E, R, t, inls, K)
+    R, t = optimize_init_Rt(cam1, cam2, E, R, t, inls, K)
 
     # ep.plot_inliers(cam1.img, cam1.f, cam2.f, corresps, inls)
     # ep.plot_e_lines(cam1.img, cam2.img, cam1.f, cam2.f, corresps, inls, F)
@@ -251,7 +248,7 @@ if __name__ == '__main__':
         R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
 
         # perform the optimisation over the new R and t
-        # [OPT] R, t = optimize_new_Rt(new_cam, Xs, X_crp, u_crp, K, R, t, new_inls)
+        R, t = optimize_new_Rt(new_cam, Xs, X_crp, u_crp, K, R, t, new_inls)
 
         new_cam.P = K @ np.hstack((R, t))
 

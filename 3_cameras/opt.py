@@ -24,11 +24,12 @@ def optimize_init_Rt(cam1, cam2, E, R, t, inls, K):
     u1 = tb.e2p(f1[crp[inls, 0]].T)       # homogenous inliers in img1
     u2 = tb.e2p(f2[crp[inls, 1]].T)       # homogenous inliers in img2
 
-    # note: it seems that when we are reconstructing E, sometimes E = [-t]x @ R
-    #       gives us the negative E in F!!, should we check it before computaton?
     K_inv = np.linalg.inv(K)
-    F = K_inv.T @ E @ K_inv
-    F_test = K_inv.T @ tb.sqc(-t) @ R @ K_inv  # for comparison
+
+    # note: it seems that when we are reconstructing E, sometimes E = [-t]x @ R
+    #       gives us the negative E!!, should we check it before computaton?
+    # F = K_inv.T @ E @ K_inv
+    # F_test = K_inv.T @ tb.sqc(-t) @ R @ K_inv  # <-- for comparison
 
     Rt_params = np.zeros(6)
 
@@ -41,17 +42,14 @@ def optimize_init_Rt(cam1, cam2, E, R, t, inls, K):
     return R_new, t_new
 
 
-def reprojection_err_f(Rt_params, Xs, feats, Xs_crp, u_crp, R, t, K):
+def reprojection_err_f(Rt_params, X, u_orig, R, t, K):
     R_params = Rt_params[:3]
     R_new = R @ Rot.from_rotvec(R_params).as_matrix()  # from 3-vec to matrix
     t_new = t + Rt_params[3:].reshape(3, 1)
 
     # use P with K because the points are unrectified!
     P2 = K @ np.hstack((R_new, t_new))
-    X = Xs[:, Xs_crp]
     P2_X = P2 @ X  # precompute the projection
-
-    u_orig = tb.e2p(feats[u_crp].T)
     u_new  = tb.norm(P2_X)
 
     e_reprj = np.sqrt((u_new[0, :] - u_orig[0, :])**2 + (u_new[1, :] - u_orig[1, :])**2)
@@ -63,9 +61,12 @@ def optimize_new_Rt(new_cam, Xs, Xs_crp, u_crp, K, R, t, new_inls):
     Xs_crp = Xs_crp[new_inls]
     u_crp = u_crp[new_inls]
 
+    X = Xs[:, Xs_crp]
+    u_orig = tb.e2p(feats[u_crp].T)
+
     Rt_params = np.zeros(6)
 
-    opt_Rt_params = opt.fmin(reprojection_err_f, Rt_params, (Xs, feats, Xs_crp, u_crp, R, t, K))
+    opt_Rt_params = opt.fmin(reprojection_err_f, Rt_params, (X, u_orig, R, t, K))
     best_Rp, best_tp = opt_Rt_params[:3], opt_Rt_params[3:]
 
     R_new = R @ Rot.from_rotvec(best_Rp).as_matrix()  # from 3-vec to matrix
