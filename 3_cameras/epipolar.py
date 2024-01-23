@@ -42,7 +42,7 @@ def ransac_E(features1, features2, corresp, K):
             if not decomp:
                 continue
             [R, t] = decomp
-            F = K_inv.T@E@K_inv
+            F = K_inv.T @ E @ K_inv
 
             # use P with the K because the points are unrectified!
             P1 = K @ np.eye(3, 4)

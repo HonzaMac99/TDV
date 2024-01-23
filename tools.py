@@ -257,6 +257,7 @@ def get_F_from_P(P1, P2):
 
 
 # compute F from P1, P2 using K, Rs and ts - slides 79
+# note: sqc(-t) @ R doesn't give us the precise E!!
 def get_F_from_P_2(P1, P2):
     K = np.loadtxt('scene_1/K.txt', dtype='float')
     K_inv = np.linalg.inv(K)

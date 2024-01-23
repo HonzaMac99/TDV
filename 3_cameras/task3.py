@@ -20,6 +20,7 @@ import ge
 from load import *
 from plot import *
 from geometry import *
+# [OPT] from opt import *
 
 
 class Camera:
@@ -58,9 +59,9 @@ def init_c(n_cameras, verbose):
 
 
 # p3p ransac to get R, t
-def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
+def get_new_cam(new_cam, Xs, Xs_crp, u_crp, K):
     ''' get new camera parameters such as R, t and inlier idxs of X-u corrspondences
-        in: cam_id  ... [int] id of the camera
+        in: new_cam ... [Camera] class obj of the new camera
         in: Xs      ... [4xn] homogenous array of all 3D points
         in: Xs_crp  ... [int array] of idxs for 3D points Xs, obtained from c.get_Xu(cam_id)
         in: u_crp   ... [int array] of idxs for features u, obtained from c.get_Xu(cam_id)
@@ -72,7 +73,8 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
     '''
     print("Estimating new cam R, t")
 
-    feats = get_feats(cam_id)
+    # feats = get_feats(cam_id)
+    feats = new_cam.f
 
     best_support = 0
     best_R = np.zeros((3, 3))
@@ -122,33 +124,23 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
             P2_X = P2 @ X  # precompute the projection
 
             u_orig = tb.e2p(feats[u_crp].T)
-            u_new  = tb.e2p(tb.p2e(P2_X))
+            u_new  = tb.norm(P2_X)
 
+            # precompute the euclidean reprojection errors
+            e_reprj = np.sqrt((u_new[0, :] - u_orig[0, :])**2 + (u_new[1, :] - u_orig[1, :])**2)
 
             support = 0
             inlier_idxs = []
-            errors = np.zeros((n_crp))
             for i in range(n_crp):
-                # Xi = X[:, i].reshape(4, 1)
-                ui_orig = u_orig[:, i].reshape(3, 1)
-                ui_new  = u_new[:, i].reshape(3, 1)
-
-                # note: Xi is already in front of the P1
+                # note: Xi is already in front of the P1 -> just check pozitive z of P2 @ X
                 # note: when support is < 3, one or more of the selected 3D points project behind the camera P2
                 # note: checking "(K_inv @ P2 @ Xi)[2] > 0" or checking "(P2 @ Xi)[2] > 0" makes no difference
 
                 # compute the sampson error only for points in front of the camera
                 if P2_X[2, i] > 0:
 
-                    # euclidean reprojection error
-                    e_reprj = math.sqrt(
-                        (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
-                        (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
-
-                    errors[i] = e_reprj
-
-                    if e_reprj**2 <= theta**2:
-                        support += float(1 - e_reprj**2/theta**2)
+                    if e_reprj[i]**2 <= theta**2:
+                        support += float(1 - e_reprj[i]**2/theta**2)
                         inlier_idxs.append(i)
                         # note: c.join_camera works with indexes (i) of Xs_crp and not its elements to keep the inliers
 
@@ -158,7 +150,7 @@ def get_new_cam(cam_id, Xs, Xs_crp, u_crp, K):
                 best_R = R
                 best_t = t
                 best_inlier_idxs = inlier_idxs
-                best_errors = errors
+                best_errors = e_reprj
 
                 # update the k_max
                 w = (support + 1) / (n_crp + 1)
@@ -208,13 +200,15 @@ if __name__ == '__main__':
     # do not stop between refresh() and save_E_params() calls!!
     if refresh(cam1.id, cam2.id):
         E, R, t, inls = ep.ransac_E(cam1.f, cam2.f, corresps, K)
-        # todo: R, t = optimize_init_Rt(cam1, cam2, inls, R, t)
         save_E_params(E, R, t, inls)
     else:
         E, R, t, inls = load_E_params()
         print("E, R, t, inls loaded from files")
 
     F = K_inv.T @ E @ K_inv
+
+    # perform the optimisation over the new R and t
+    # [OPT] R, t = optimize_init_Rt(cam1, cam2, E, R, t, inls, K)
 
     # ep.plot_inliers(cam1.img, cam1.f, cam2.f, corresps, inls)
     # ep.plot_e_lines(cam1.img, cam2.img, cam1.f, cam2.f, corresps, inls, F)
@@ -231,9 +225,9 @@ if __name__ == '__main__':
     n_cluster_cams = 2
     # n_cams = 7  # fewer cameras for testing
 
-    # ==============================================================================
-    # =                               Main loop                                    =
-    # ==============================================================================
+    # ================================================================================================
+    # =                                        Main loop                                             =
+    # ================================================================================================
 
     while n_cluster_cams < n_cams:
 
@@ -254,21 +248,22 @@ if __name__ == '__main__':
         cam_crp_prev = np.array(c.get_m(new_cam.id, cam1.id)).T
 
         # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
-        R, t, new_inls = get_new_cam(new_cam.id, Xs, X_crp, u_crp, K)
-        # todo: R, t = optimize_new_Rt(cam1, cam2, new_inls, R, t)
+        R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
+
+        # perform the optimisation over the new R and t
+        # [OPT] R, t = optimize_new_Rt(new_cam, Xs, X_crp, u_crp, K, R, t, new_inls)
 
         new_cam.P = K @ np.hstack((R, t))
 
-        # add the new camera to the cluster, OK
+        # add the new camera to the cluster
         c.join_camera(new_cam.id, new_inls)
 
-        # get the img-img crp and 3D-img crp after the call of camera join for the asserts
+        # [CHECK] img-img and 3D-img corresp after the call of c.join_camera =============================
         X_crp_after, u_crp_after, _ = c.get_Xu(new_cam.id)
         cam_crp_after = np.array(c.get_m(new_cam.id, cam1.id)).T
-
         assert np.array_equal(u_crp_after, u_crp[new_inls]), "New image points do not match the inliers!"
         assert np.array_equal(X_crp_after, X_crp[new_inls]), "New 3D points do not match the inliers!"
-        # check also the img-img correspondences?
+        # ================================================================================================
 
         # get ids of cameras that still have img-img corresps to the new_cam
         nb_cam_list = c.get_cneighbours(new_cam.id)
@@ -286,29 +281,25 @@ if __name__ == '__main__':
             new_Xs = get_new_3d_points(new_cam, nb_cam, cam_crp, K, True)
             new_colors = get_new_3d_colors(new_cam, nb_cam, cam_crp)
 
-            # precompute the transformations here for faster checks
-            P1_new_X = P1 @ new_Xs
-            P2_new_X = P2 @ new_Xs
-
             u1_orig = tb.e2p(new_cam.f[cam_crp[:, 0]].T)
             u2_orig = tb.e2p(nb_cam.f[cam_crp[:, 1]].T)
 
-            # get inliers with pozitive z
+            # precompute the transformations & normalisations here for faster checks
+            u1_new = tb.norm(P1 @ new_Xs)
+            u2_new = tb.norm(P2 @ new_Xs)
+
+            # precompute euclidean reprojection errors
+            e_reprj_1 = np.sqrt((u1_new[0, :] - u1_orig[0, :])**2 + (u1_new[1, :] - u1_orig[1, :])**2)
+            e_reprj_2 = np.sqrt((u2_new[0, :] - u2_orig[0, :])**2 + (u2_new[1, :] - u2_orig[1, :])**2)
+            e_reprj = (e_reprj_1 + e_reprj_2) / 2
+
             inls = []  # must be indices to corresp between new_cam and nb_cam
             theta = 3
             for i in range(new_Xs.shape[1]):   # n of corresps, cam_crp.shape[0] could also be used
+                # # get inliers with pozitive z
                 # if P1_new_X[2, i] > 0 and P2_new_X[2, i] > 0:
 
-                # euclidean reprojection error
-                e_reprj_1 = math.sqrt(
-                    (P1_new_X[0, i]/P1_new_X[2, i] - u1_orig[0, i]/u1_orig[2, i])**2 +
-                    (P1_new_X[1, i]/P1_new_X[2, i] - u1_orig[1, i]/u1_orig[2, i])**2)
-                e_reprj_2 = math.sqrt(
-                    (P2_new_X[0, i]/P2_new_X[2, i] - u2_orig[0, i]/u2_orig[2, i])**2 +
-                    (P2_new_X[1, i]/P2_new_X[2, i] - u2_orig[1, i]/u2_orig[2, i])**2)
-                e_reprj = (e_reprj_1 + e_reprj_2) / 2
-
-                if e_reprj**2 < theta**2:
+                if e_reprj[i]**2 < theta**2:
                     new_X = new_Xs[:, i].reshape(4, 1)
                     Xs = np.hstack((Xs, new_X))     # append new 3D point
                     colors.append(new_colors[i])    # append new color
@@ -346,9 +337,7 @@ if __name__ == '__main__':
                 ui_new = tb.e2p(tb.p2e(P_Xi))
 
                 if K_inv_P_Xs[2, X_crp[idx]] > 0:
-                    e_reprj = math.sqrt(
-                        (ui_new[0]/ui_new[2] - ui_orig[0]/ui_orig[2])**2 +
-                        (ui_new[1]/ui_new[2] - ui_orig[1]/ui_orig[2])**2)
+                    e_reprj = np.sqrt((ui_new[0] - ui_orig[0])**2 + (ui_new[1] - ui_orig[1])**2)
 
                     if e_reprj**2 < theta**2:
                         crp_ok.append(idx) # save the indexes to X-u correspondences, OK
@@ -360,9 +349,9 @@ if __name__ == '__main__':
         print("Camera", new_cam.id,"finalized")
         n_cluster_cams += 1
 
-    # ==============================================================================
-    # =                                Plotting                                    =
-    # ==============================================================================
+    # ================================================================================================
+    # =                                         Plotting                                             =
+    # ================================================================================================
 
     # plot the centers of cameras
     fig = plt.figure()
@@ -406,9 +395,9 @@ if __name__ == '__main__':
     print(Xs.shape[1], "points")
     plt.show()
 
-    # ==============================================================================
-    # =                                 Saving                                     =
-    # ==============================================================================
+    # ================================================================================================
+    # =                                          Saving                                              =
+    # ================================================================================================
 
     Xs = tb.p2e(Xs)
     colors = np.array(colors).T
