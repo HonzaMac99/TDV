@@ -19,6 +19,9 @@ from plot import *
 from geometry import *
 from opt import *
 
+OPTIMIZE = True
+PLOT = True
+
 
 class Camera:
     id = -1
@@ -171,11 +174,12 @@ def get_new_cam(new_cam, Xs, Xs_crp, u_crp, K):
     print("Result R\n", best_R)
     print("Result t\n", best_t)
 
-    # plot the results of P transformation
-    plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp)
+    if PLOT:
+        # plot the results of P transformation
+        plot_transformation(best_R, best_t, best_inlier_idxs, Xs, Xs_crp, feats, u_crp)
 
-    # display a histogram of the reprj. error distribution
-    plot_error_hist(best_errors, theta, len(best_inlier_idxs))
+        # display a histogram of the reprj. error distribution
+        plot_error_hist(best_errors, theta, len(best_inlier_idxs))
 
     return best_R, best_t, best_inlier_idxs
 
@@ -204,8 +208,9 @@ if __name__ == '__main__':
 
     F = K_inv.T @ E @ K_inv
 
-    # perform the optimisation over the new R and t
-    R, t = optimize_init_Rt(cam1, cam2, E, R, t, inls, K)
+    if OPTIMIZE:
+        # perform the optimisation over the new R and t
+        R, t = optimize_init_Rt(cam1, cam2, E, R, t, inls, K)
 
     # ep.plot_inliers(cam1.img, cam1.f, cam2.f, corresps, inls)
     # ep.plot_e_lines(cam1.img, cam2.img, cam1.f, cam2.f, corresps, inls, F)
@@ -247,8 +252,9 @@ if __name__ == '__main__':
         # get the transformation of the new camera from the global frame (cam1) by the p3p algorithm
         R, t, new_inls = get_new_cam(new_cam, Xs, X_crp, u_crp, K)
 
-        # perform the optimisation over the new R and t
-        R, t = optimize_new_Rt(new_cam, Xs, X_crp, u_crp, K, R, t, new_inls)
+        if OPTIMIZE:
+            # perform the optimisation over the new R and t
+            R, t = optimize_new_Rt(new_cam, Xs, X_crp, u_crp, K, R, t, new_inls)
 
         new_cam.P = K @ np.hstack((R, t))
 
