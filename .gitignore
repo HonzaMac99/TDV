@@ -2,6 +2,7 @@
 *.zip
 *.pdf
 *.ply
+*.png
 3_cameras_demo/
 
 .idea/
