@@ -144,8 +144,10 @@ def EutoRt(E, u1, u2):
 # binocular reconstruction by DLT triangulation
 def Pu2X(P1, P2, u1, u2):
     n_points = u1.shape[1]
-    u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
-    u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+    # u1 = np.vstack((p2e(u1), np.ones((1, n_points))))
+    # u2 = np.vstack((p2e(u2), np.ones((1, n_points))))
+    assert u1[2].max() <= 1, "u1 not normalized!"
+    assert u2[2].max() <= 1, "u2 not normalized!"
 
     X = np.zeros((4, n_points))
     for i in range(n_points):
