@@ -134,7 +134,7 @@ def get_new_cam(new_cam, Xs, Xs_crp, u_crp, K):
             support = 0
             inlier_idxs = []
             for i in range(n_crp):
-                # note: Xi is already in front of the P1 -> just check pozitive z of P2 @ X
+                # note: Xi is already in front of the P1 -> just check positive z of P2 @ X
                 # note: when support is < 3, one or more of the selected 3D points project behind the camera P2
                 # note: checking "(K_inv @ P2 @ Xi)[2] > 0" or checking "(P2 @ Xi)[2] > 0" makes no difference
 
